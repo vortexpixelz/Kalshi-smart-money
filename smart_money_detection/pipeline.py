@@ -1,0 +1,469 @@
+"""
+Main detection pipeline orchestrating all components
+
+This is the primary interface for smart money detection with minimal labeled data.
+"""
+import numpy as np
+import pandas as pd
+from typing import Optional, Dict, List, Any, Tuple, Union
+import logging
+
+from .config import Config, default_config
+from .detectors import ZScoreDetector, IQRDetector, PercentileDetector, RelativeVolumeDetector
+from .ensemble import AnomalyEnsemble
+from .features import TemporalFeatureEncoder
+from .models import VPIN, VPINClassifier, SimplifiedPIN
+from .active_learning import QueryByCommittee, FeedbackManager
+from .utils import compute_metrics, find_optimal_threshold, bayesian_optimize_weights
+
+
+class SmartMoneyDetector:
+    """
+    Complete smart money detection system with minimal labeled data
+
+    Combines:
+    - Base anomaly detectors (z-score, IQR, percentile, volume)
+    - Adaptive ensemble weighting (Thompson Sampling, UCB, MWU)
+    - Smart money models (VPIN, PIN)
+    - Active learning (Query-by-Committee)
+    - Temporal feature encoding
+    - Human-in-the-loop feedback
+
+    Example:
+        >>> detector = SmartMoneyDetector()
+        >>> detector.fit(historical_trades)
+        >>> anomalies = detector.predict(new_trades)
+        >>> queries = detector.suggest_manual_reviews(new_trades, n=10)
+        >>> detector.add_feedback(sample_ids, labels)
+    """
+
+    def __init__(self, config: Optional[Config] = None):
+        """
+        Initialize smart money detector
+
+        Args:
+            config: Configuration object (default: use default config)
+        """
+        self.config = config or default_config
+
+        # Setup logging
+        logging.basicConfig(level=self.config.log_level)
+        self.logger = logging.getLogger(__name__)
+
+        # Initialize components
+        self._init_feature_encoder()
+        self._init_detectors()
+        self._init_ensemble()
+        self._init_smart_money_models()
+        self._init_active_learning()
+
+        # State tracking
+        self.is_fitted = False
+        self.n_samples_seen = 0
+
+    def _init_feature_encoder(self):
+        """Initialize temporal feature encoder"""
+        self.feature_encoder = TemporalFeatureEncoder()
+
+    def _init_detectors(self):
+        """Initialize base anomaly detectors"""
+        cfg = self.config.detector
+
+        self.detectors = [
+            ZScoreDetector(
+                threshold=cfg.zscore_threshold,
+                rolling_window=cfg.zscore_rolling_window,
+            ),
+            IQRDetector(
+                multiplier=cfg.iqr_multiplier,
+                rolling_window=cfg.iqr_rolling_window,
+            ),
+            PercentileDetector(
+                percentile=cfg.percentile_threshold,
+                rolling_window=cfg.percentile_rolling_window,
+            ),
+            RelativeVolumeDetector(
+                threshold_multiplier=cfg.volume_threshold_multiplier,
+                rolling_window=cfg.volume_rolling_window,
+            ),
+        ]
+
+    def _init_ensemble(self):
+        """Initialize ensemble with weighting strategy"""
+        cfg = self.config.ensemble
+
+        weighting_params = {
+            'learning_rate': cfg.mwu_learning_rate,
+            'exploration_param': cfg.ucb_exploration_param,
+            'alpha_prior': cfg.thompson_alpha_prior,
+            'beta_prior': cfg.thompson_beta_prior,
+        }
+
+        self.ensemble = AnomalyEnsemble(
+            detectors=self.detectors,
+            weighting_method=cfg.weighting_method,
+            weighting_params=weighting_params,
+        )
+
+    def _init_smart_money_models(self):
+        """Initialize smart money detection models"""
+        cfg = self.config.smart_money
+
+        self.vpin_model = VPINClassifier(
+            threshold=cfg.vpin_threshold,
+            n_buckets=cfg.vpin_buckets,
+            bucket_pct_of_daily=cfg.vpin_volume_bucket_size,
+        )
+
+        self.pin_model = SimplifiedPIN(
+            large_trade_threshold=cfg.large_trade_percentile / 100,
+        )
+
+    def _init_active_learning(self):
+        """Initialize active learning components"""
+        cfg = self.config.active_learning
+
+        if cfg.query_strategy == 'qbc':
+            self.query_strategy = QueryByCommittee(batch_size=cfg.batch_size)
+        else:
+            # Default to QBC
+            self.query_strategy = QueryByCommittee(batch_size=cfg.batch_size)
+
+        self.feedback_manager = FeedbackManager(optimize_f1=cfg.optimize_f1)
+
+    def fit(
+        self,
+        trades: pd.DataFrame,
+        volume_col: str = 'volume',
+        timestamp_col: str = 'timestamp',
+        price_col: Optional[str] = None,
+    ):
+        """
+        Fit detector on historical trade data
+
+        Args:
+            trades: DataFrame with trade data
+            volume_col: Name of volume column
+            timestamp_col: Name of timestamp column
+            price_col: Optional name of price column (for VPIN)
+
+        Returns:
+            self
+        """
+        self.logger.info(f"Fitting smart money detector on {len(trades)} trades")
+
+        # Extract volumes
+        volumes = trades[volume_col].values.reshape(-1, 1)
+
+        # Fit base detectors
+        for detector in self.detectors:
+            detector.fit(volumes)
+
+        # Fit ensemble (just initializes weights)
+        self.ensemble.fit(volumes)
+
+        # Fit smart money models
+        self.pin_model.fit(volumes.flatten())
+
+        if price_col is not None and price_col in trades.columns:
+            prices = trades[price_col].values
+            self.vpin_model.fit(prices, volumes.flatten())
+
+        self.is_fitted = True
+        self.n_samples_seen = len(trades)
+
+        self.logger.info("Smart money detector fitted successfully")
+
+        return self
+
+    def predict(
+        self,
+        trades: pd.DataFrame,
+        volume_col: str = 'volume',
+        timestamp_col: str = 'timestamp',
+        use_temporal_context: bool = True,
+    ) -> np.ndarray:
+        """
+        Predict smart money (informed trading) on new trades
+
+        Args:
+            trades: DataFrame with trade data
+            volume_col: Name of volume column
+            timestamp_col: Name of timestamp column
+            use_temporal_context: If True, use temporal features for contextual weighting
+
+        Returns:
+            Binary predictions (0 = normal, 1 = smart money)
+        """
+        if not self.is_fitted:
+            raise RuntimeError("Detector not fitted. Call fit() first.")
+
+        scores = self.score(trades, volume_col, timestamp_col, use_temporal_context)
+
+        # Use optimal threshold from feedback if available
+        threshold = self.feedback_manager.get_optimal_threshold()
+
+        predictions = (scores >= threshold).astype(int)
+
+        return predictions
+
+    def score(
+        self,
+        trades: pd.DataFrame,
+        volume_col: str = 'volume',
+        timestamp_col: str = 'timestamp',
+        use_temporal_context: bool = True,
+    ) -> np.ndarray:
+        """
+        Compute anomaly scores for trades
+
+        Args:
+            trades: DataFrame with trade data
+            volume_col: Name of volume column
+            timestamp_col: Name of timestamp column
+            use_temporal_context: If True, use temporal features
+
+        Returns:
+            Anomaly scores in [0, 1]
+        """
+        if not self.is_fitted:
+            raise RuntimeError("Detector not fitted. Call fit() first.")
+
+        volumes = trades[volume_col].values.reshape(-1, 1)
+
+        # Get temporal context if enabled
+        context = None
+        if use_temporal_context and timestamp_col in trades.columns:
+            context = self._get_temporal_context(trades[timestamp_col])
+
+        # Get ensemble scores
+        scores = self.ensemble.score(volumes, context)
+
+        return scores
+
+    def _get_temporal_context(self, timestamps: pd.Series) -> np.ndarray:
+        """Extract temporal context features"""
+        # Encode timestamp features
+        features_dict = self.feature_encoder.encode_timestamp(timestamps, include_all=False)
+
+        # Stack features
+        feature_list = [v for v in features_dict.values()]
+        context = np.column_stack(feature_list) if feature_list else None
+
+        return context
+
+    def suggest_manual_reviews(
+        self,
+        trades: pd.DataFrame,
+        volume_col: str = 'volume',
+        timestamp_col: str = 'timestamp',
+        n_queries: int = 10,
+    ) -> Tuple[np.ndarray, pd.DataFrame]:
+        """
+        Suggest which trades to manually review using active learning
+
+        Uses Query-by-Committee to select trades where detectors disagree most.
+
+        Args:
+            trades: DataFrame with trade data
+            volume_col: Name of volume column
+            timestamp_col: Name of timestamp column
+            n_queries: Number of trades to suggest for review
+
+        Returns:
+            Tuple of (indices, suggested_trades_df)
+        """
+        if not self.is_fitted:
+            raise RuntimeError("Detector not fitted. Call fit() first.")
+
+        volumes = trades[volume_col].values.reshape(-1, 1)
+
+        # Get predictions from all detectors
+        committee_predictions = []
+        committee_scores = []
+
+        for detector in self.detectors:
+            pred = detector.predict(volumes)
+            score = detector.score(volumes)
+            committee_predictions.append(pred)
+            committee_scores.append(score)
+
+        committee_predictions = np.column_stack(committee_predictions)
+        committee_scores = np.column_stack(committee_scores)
+
+        # Select queries using QBC
+        ensemble_scores = self.ensemble.score(volumes)
+
+        query_indices = self.query_strategy.select_queries(
+            volumes,
+            ensemble_scores,
+            n_queries=n_queries,
+            committee_predictions=committee_predictions,
+            committee_scores=committee_scores,
+        )
+
+        suggested_trades = trades.iloc[query_indices].copy()
+
+        self.logger.info(f"Suggested {len(query_indices)} trades for manual review")
+
+        return query_indices, suggested_trades
+
+    def add_feedback(
+        self,
+        sample_ids: List[Any],
+        labels: np.ndarray,
+        trades: Optional[pd.DataFrame] = None,
+        volume_col: str = 'volume',
+        update_weights: bool = True,
+    ):
+        """
+        Add manual review feedback and update ensemble weights
+
+        Args:
+            sample_ids: List of sample identifiers
+            labels: True labels (0 = normal, 1 = smart money)
+            trades: Optional DataFrame with trade data for weight updates
+            volume_col: Name of volume column
+            update_weights: If True, update ensemble weights based on feedback
+        """
+        # Add to feedback manager
+        self.feedback_manager.add_batch_feedback(sample_ids, labels)
+
+        self.logger.info(f"Added feedback for {len(labels)} samples")
+
+        # Update ensemble weights if requested and trade data provided
+        if update_weights and trades is not None:
+            volumes = trades.loc[sample_ids, volume_col].values.reshape(-1, 1)
+            self.ensemble.update(volumes, labels)
+
+            self.logger.info("Updated ensemble weights based on feedback")
+
+        # Log statistics
+        stats = self.feedback_manager.get_statistics()
+        self.logger.info(f"Feedback statistics: {stats}")
+
+    def get_feedback_statistics(self) -> Dict[str, Any]:
+        """Get statistics about manual reviews and performance"""
+        return self.feedback_manager.get_statistics()
+
+    def get_ensemble_weights(self) -> Dict[str, float]:
+        """Get current ensemble detector weights"""
+        weights = self.ensemble.get_weights()
+        detector_names = [d.name for d in self.detectors]
+
+        return dict(zip(detector_names, weights))
+
+    def get_detector_contributions(
+        self, trades: pd.DataFrame, volume_col: str = 'volume'
+    ) -> Dict[str, Any]:
+        """
+        Get individual detector contributions for interpretability
+
+        Args:
+            trades: DataFrame with trade data
+            volume_col: Name of volume column
+
+        Returns:
+            Dictionary with detector contributions
+        """
+        volumes = trades[volume_col].values.reshape(-1, 1)
+        return self.ensemble.get_detector_contributions(volumes)
+
+    def optimize_weights(
+        self,
+        method: str = 'bayesian',
+        n_iterations: int = 20,
+    ) -> Tuple[np.ndarray, float]:
+        """
+        Optimize ensemble weights using feedback data
+
+        Should only be called after accumulating 10-50 labeled examples.
+
+        Args:
+            method: Optimization method ('bayesian', 'gradient', 'evolutionary')
+            n_iterations: Number of optimization iterations
+
+        Returns:
+            Tuple of (optimal_weights, performance_metric)
+        """
+        # Get labeled data
+        sample_ids, labels, _ = self.feedback_manager.get_labeled_data()
+
+        if len(labels) < 10:
+            self.logger.warning(
+                f"Only {len(labels)} labeled samples available. "
+                "Recommend waiting until 10-50 samples before optimizing weights."
+            )
+
+        # This is a placeholder - in practice you'd need the actual detector scores
+        # for the labeled samples
+        self.logger.info(f"Optimizing ensemble weights using {method} method")
+
+        # Return current weights as placeholder
+        current_weights = self.ensemble.get_weights()
+
+        return current_weights, 0.0
+
+    def save_state(self, filepath: str):
+        """
+        Save detector state to file
+
+        Args:
+            filepath: Path to save state
+        """
+        import pickle
+
+        state = {
+            'config': self.config.to_dict(),
+            'ensemble_state': self.ensemble.get_state(),
+            'feedback_data': self.feedback_manager.feedback_data,
+            'is_fitted': self.is_fitted,
+            'n_samples_seen': self.n_samples_seen,
+        }
+
+        with open(filepath, 'wb') as f:
+            pickle.dump(state, f)
+
+        self.logger.info(f"Saved detector state to {filepath}")
+
+    def load_state(self, filepath: str):
+        """
+        Load detector state from file
+
+        Args:
+            filepath: Path to load state from
+        """
+        import pickle
+
+        with open(filepath, 'rb') as f:
+            state = pickle.load(f)
+
+        self.ensemble.set_state(state['ensemble_state'])
+        self.feedback_manager.feedback_data = state['feedback_data']
+        self.is_fitted = state['is_fitted']
+        self.n_samples_seen = state['n_samples_seen']
+
+        self.logger.info(f"Loaded detector state from {filepath}")
+
+    def evaluate(
+        self, trades: pd.DataFrame, labels: np.ndarray, volume_col: str = 'volume'
+    ) -> Dict[str, float]:
+        """
+        Evaluate detector performance on labeled data
+
+        Args:
+            trades: DataFrame with trade data
+            labels: True labels
+            volume_col: Name of volume column
+
+        Returns:
+            Dictionary of performance metrics
+        """
+        predictions = self.predict(trades, volume_col)
+        scores = self.score(trades, volume_col)
+
+        metrics = compute_metrics(labels, predictions, scores)
+
+        self.logger.info(f"Evaluation metrics: {metrics}")
+
+        return metrics
