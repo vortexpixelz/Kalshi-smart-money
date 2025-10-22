@@ -2,7 +2,7 @@
 Validation utilities for models with minimal labeled data
 """
 import numpy as np
-from typing import Callable, Dict, Any, List
+from typing import Callable, Dict, Any, List, Optional
 from sklearn.model_selection import KFold, LeaveOneOut
 
 

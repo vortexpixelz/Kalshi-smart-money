@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  smart-money-detector:
+    build: .
+    container_name: kalshi-smart-money
+    environment:
+      # Kalshi API (set your credentials here or in .env)
+      - KALSHI_API_KEY=${KALSHI_API_KEY:-}
+      - KALSHI_API_BASE=${KALSHI_API_BASE:-https://api.elections.kalshi.com}
+      - KALSHI_DEMO_MODE=${KALSHI_DEMO_MODE:-true}
+
+      # Detection configuration
+      - DETECTION_THRESHOLD=${DETECTION_THRESHOLD:-0.75}
+      - MIN_VOLUME_THRESHOLD=${MIN_VOLUME_THRESHOLD:-100}
+      - ENABLE_ACTIVE_LEARNING=${ENABLE_ACTIVE_LEARNING:-true}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    volumes:
+      # Mount data directory for persistence
+      - ./data:/data
+      # Mount .env if it exists
+      - ./.env:/app/.env:ro
+
+    # Interactive mode for testing
+    stdin_open: true
+    tty: true
+
+    # Override command for different modes
+    # Uncomment one of these or use docker-compose run
+
+    # Run live test
+    command: python test_live.py
+
+    # Or run basic example
+    # command: python examples/basic_usage.py
+
+    # Or run Kalshi integration
+    # command: python examples/kalshi_integration.py
+
+    # Or start interactive shell
+    # command: /bin/bash
+
+networks:
+  default:
+    name: smart-money-network
