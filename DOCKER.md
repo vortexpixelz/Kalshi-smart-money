@@ -73,6 +73,7 @@ Create a `.env` file:
 ```bash
 # Kalshi API
 KALSHI_API_KEY=your_key_here
+# Optional: override the default Kalshi API base URL
 KALSHI_API_BASE=https://api.elections.kalshi.com
 KALSHI_DEMO_MODE=false  # Set to true for demo mode
 
@@ -83,6 +84,8 @@ MIN_VOLUME_THRESHOLD=100
 # Logging
 LOG_LEVEL=INFO
 ```
+
+If `KALSHI_API_BASE` is set in your environment or `.env` file, the Kalshi client now uses it automatically—no need to pass `api_base` manually when instantiating `KalshiClient`.
 
 ## Persisting Data
 
