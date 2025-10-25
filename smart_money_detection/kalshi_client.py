@@ -21,7 +21,7 @@ class KalshiClient:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        api_base: str = "https://api.elections.kalshi.com",
+        api_base: Optional[str] = None,
         demo_mode: bool = False,
     ):
         """
@@ -33,7 +33,10 @@ class KalshiClient:
             demo_mode: If True, use demo/mock data instead of real API
         """
         self.api_key = api_key or os.getenv('KALSHI_API_KEY')
-        self.api_base = api_base.rstrip('/')
+        resolved_api_base = api_base if api_base is not None else os.getenv(
+            'KALSHI_API_BASE', 'https://api.elections.kalshi.com'
+        )
+        self.api_base = resolved_api_base.rstrip('/')
         self.demo_mode = demo_mode or os.getenv('KALSHI_DEMO_MODE', 'false').lower() == 'true'
 
         self.logger = logging.getLogger(__name__)
