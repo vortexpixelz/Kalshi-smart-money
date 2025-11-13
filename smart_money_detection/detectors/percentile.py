@@ -1,9 +1,12 @@
-"""
-Percentile-based anomaly detector
-"""
+"""Percentile-based anomaly detector."""
+
+from __future__ import annotations
+
+from typing import Optional, Union
+
 import numpy as np
 import pandas as pd
-from typing import Union, Optional
+
 from .base import BaseDetector
 
 
@@ -37,90 +40,35 @@ class PercentileDetector(BaseDetector):
         self.upper_threshold_ = None
         self.lower_threshold_ = None
 
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
-        """
-        Fit the detector by computing percentile threshold(s)
+    def _fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> None:
+        """Compute percentile thresholds."""
 
-        Args:
-            X: Training data of shape (n_samples, n_features)
-            y: Ignored (unsupervised method)
-
-        Returns:
-            self
-        """
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values
-        else:
-            X_values = X
-
-        # Compute upper threshold
-        self.upper_threshold_ = np.percentile(X_values, self.percentile, axis=0)
-
-        # Compute lower threshold if two-sided
+        self.upper_threshold_ = np.percentile(X, self.percentile, axis=0)
         if self.two_sided:
-            self.lower_threshold_ = np.percentile(
-                X_values, 100 - self.percentile, axis=0
-            )
-
-        self.is_fitted_ = True
-        self.n_samples_seen_ = X_values.shape[0]
-
-        return self
-
-    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Compute anomaly scores based on percentile rank
-
-        Score is the percentile rank of the data point. For two-sided detection,
-        uses distance from the median (50th percentile).
-
-        Args:
-            X: Data to score of shape (n_samples, n_features)
-
-        Returns:
-            Anomaly scores of shape (n_samples,)
-        """
-        self.check_is_fitted()
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values
+            self.lower_threshold_ = np.percentile(X, 100 - self.percentile, axis=0)
         else:
-            X_values = X
+            self.lower_threshold_ = None
+
+    def _score(self, X: np.ndarray) -> np.ndarray:
+        """Return normalized distances from the learned percentile bounds."""
 
         if self.two_sided:
-            # Compute distance from both thresholds
-            upper_distance = np.maximum(X_values - self.upper_threshold_, 0)
-            lower_distance = np.maximum(self.lower_threshold_ - X_values, 0)
-
-            # Normalize by range
-            threshold_range = self.upper_threshold_ - self.lower_threshold_
-            threshold_range = np.where(threshold_range > 0, threshold_range, 1.0)
-
-            upper_scores = upper_distance / threshold_range
-            lower_scores = lower_distance / threshold_range
-
-            # Take maximum
-            scores = np.maximum(upper_scores, lower_scores)
-        else:
-            # One-sided: only upper tail
-            distance = np.maximum(X_values - self.upper_threshold_, 0)
-
-            # Normalize by threshold value
-            threshold_safe = np.where(
-                self.upper_threshold_ > 0, self.upper_threshold_, 1.0
+            upper_distance = np.maximum(X - self.upper_threshold_, 0)
+            lower_distance = np.maximum(self.lower_threshold_ - X, 0)
+            threshold_range = np.where(
+                (self.upper_threshold_ - self.lower_threshold_) > 0,
+                self.upper_threshold_ - self.lower_threshold_,
+                1.0,
             )
+            scores = np.maximum(upper_distance, lower_distance) / threshold_range
+        else:
+            distance = np.maximum(X - self.upper_threshold_, 0)
+            threshold_safe = np.where(self.upper_threshold_ > 0, self.upper_threshold_, 1.0)
             scores = distance / threshold_safe
 
-        # Take maximum across features
         if scores.ndim > 1:
-            scores = np.max(scores, axis=1)
-        else:
-            scores = scores.flatten()
-
-        return scores
+            return np.max(scores, axis=1)
+        return scores.reshape(-1)
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """
@@ -132,30 +80,8 @@ class PercentileDetector(BaseDetector):
         Returns:
             Binary predictions of shape (n_samples,)
         """
-        self.check_is_fitted()
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values
-        else:
-            X_values = X
-
-        if self.two_sided:
-            # Anomaly if outside either threshold
-            predictions = (
-                (X_values > self.upper_threshold_) | (X_values < self.lower_threshold_)
-            )
-        else:
-            # Anomaly if above upper threshold
-            predictions = X_values > self.upper_threshold_
-
-        # Any feature exceeds threshold -> anomaly
-        if predictions.ndim > 1:
-            predictions = np.any(predictions, axis=1)
-        else:
-            predictions = predictions.flatten()
-
-        return predictions.astype(int)
+        scores = self.score(X)
+        return (scores > 0).astype(int)
 
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
@@ -223,5 +149,5 @@ class PercentileDetector(BaseDetector):
         Returns:
             Tuple of (lower_threshold, upper_threshold) or (None, upper_threshold)
         """
-        self.check_is_fitted()
+        self._check_is_fitted()
         return (self.lower_threshold_, self.upper_threshold_)

@@ -1,9 +1,12 @@
-"""
-Relative volume anomaly detector for detecting large trades
-"""
+"""Relative volume anomaly detector for detecting large trades."""
+
+from __future__ import annotations
+
+from typing import Optional, Union
+
 import numpy as np
 import pandas as pd
-from typing import Union, Optional
+
 from .base import BaseDetector
 
 
@@ -36,63 +39,23 @@ class RelativeVolumeDetector(BaseDetector):
 
         self.baseline_ = None
 
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
-        """
-        Fit the detector by computing baseline volume
+    def _fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> None:
+        """Compute the reference baseline volume."""
 
-        Args:
-            X: Training volume data of shape (n_samples, 1) or (n_samples,)
-            y: Ignored (unsupervised method)
-
-        Returns:
-            self
-        """
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values.flatten()
-        else:
-            X_values = X.flatten()
-
-        # Compute baseline
+        flattened = X.reshape(-1)
         if self.use_median:
-            self.baseline_ = np.median(X_values)
+            self.baseline_ = float(np.median(flattened))
         else:
-            self.baseline_ = np.mean(X_values)
+            self.baseline_ = float(np.mean(flattened))
 
-        # Prevent zero baseline
         if self.baseline_ == 0:
             self.baseline_ = 1.0
 
-        self.is_fitted_ = True
-        self.n_samples_seen_ = len(X_values)
+    def _score(self, X: np.ndarray) -> np.ndarray:
+        """Return the ratio of the observed volume to the baseline."""
 
-        return self
-
-    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Compute anomaly scores based on volume ratio
-
-        Score is the ratio of volume to baseline.
-
-        Args:
-            X: Volume data to score of shape (n_samples, 1) or (n_samples,)
-
-        Returns:
-            Anomaly scores of shape (n_samples,)
-        """
-        self.check_is_fitted()
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values.flatten()
-        else:
-            X_values = X.flatten()
-
-        # Compute volume ratio
-        scores = X_values / self.baseline_
-
-        return scores
+        flattened = X.reshape(-1)
+        return flattened / self.baseline_
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """
@@ -104,26 +67,15 @@ class RelativeVolumeDetector(BaseDetector):
         Returns:
             Binary predictions of shape (n_samples,)
         """
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values.flatten()
-        else:
-            X_values = X.flatten()
-
         scores = self.score(X)
-
-        # Check relative threshold
         relative_anomaly = scores > self.threshold_multiplier
 
-        # Check absolute threshold if provided
         if self.absolute_threshold is not None:
-            absolute_anomaly = X_values > self.absolute_threshold
-            predictions = (relative_anomaly | absolute_anomaly).astype(int)
-        else:
-            predictions = relative_anomaly.astype(int)
+            array = self._to_2d_array(X).reshape(-1)
+            absolute_anomaly = array > self.absolute_threshold
+            return (relative_anomaly | absolute_anomaly).astype(int)
 
-        return predictions
+        return relative_anomaly.astype(int)
 
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
@@ -190,7 +142,7 @@ class RelativeVolumeDetector(BaseDetector):
         Returns:
             Baseline volume value
         """
-        self.check_is_fitted()
+        self._check_is_fitted()
         return self.baseline_
 
 

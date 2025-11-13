@@ -1,9 +1,12 @@
-"""
-Interquartile Range (IQR) based anomaly detector
-"""
+"""Interquartile Range (IQR) based anomaly detector."""
+
+from __future__ import annotations
+
+from typing import Optional, Union
+
 import numpy as np
 import pandas as pd
-from typing import Union, Optional
+
 from .base import BaseDetector
 
 
@@ -42,82 +45,26 @@ class IQRDetector(BaseDetector):
         self.lower_bound_ = None
         self.upper_bound_ = None
 
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
-        """
-        Fit the detector by computing quartiles and bounds
+    def _fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> None:
+        """Compute quartiles and anomaly bounds."""
 
-        Args:
-            X: Training data of shape (n_samples, n_features)
-            y: Ignored (unsupervised method)
-
-        Returns:
-            self
-        """
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values
-        else:
-            X_values = X
-
-        # Compute quartiles
-        self.q1_ = np.percentile(X_values, self.q1_percentile * 100, axis=0)
-        self.q3_ = np.percentile(X_values, self.q3_percentile * 100, axis=0)
+        self.q1_ = np.percentile(X, self.q1_percentile * 100, axis=0)
+        self.q3_ = np.percentile(X, self.q3_percentile * 100, axis=0)
         self.iqr_ = self.q3_ - self.q1_
-
-        # Compute bounds
         self.lower_bound_ = self.q1_ - self.multiplier * self.iqr_
         self.upper_bound_ = self.q3_ + self.multiplier * self.iqr_
 
-        self.is_fitted_ = True
-        self.n_samples_seen_ = X_values.shape[0]
+    def _score(self, X: np.ndarray) -> np.ndarray:
+        """Return normalized distance outside of the IQR bounds."""
 
-        return self
-
-    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Compute anomaly scores based on distance from IQR bounds
-
-        Score is 0 if within bounds, otherwise the distance from the nearest bound
-        normalized by IQR.
-
-        Args:
-            X: Data to score of shape (n_samples, n_features)
-
-        Returns:
-            Anomaly scores of shape (n_samples,)
-        """
-        self.check_is_fitted()
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values
-        else:
-            X_values = X
-
-        # Compute distances from bounds
-        lower_distance = self.lower_bound_ - X_values
-        upper_distance = X_values - self.upper_bound_
-
-        # Distance is positive if outside bounds, zero if inside
-        lower_distance = np.maximum(lower_distance, 0)
-        upper_distance = np.maximum(upper_distance, 0)
-
-        # Normalize by IQR (prevent division by zero)
+        lower_distance = np.maximum(self.lower_bound_ - X, 0)
+        upper_distance = np.maximum(X - self.upper_bound_, 0)
         iqr_safe = np.where(self.iqr_ > 0, self.iqr_, 1.0)
-        lower_distance_norm = lower_distance / iqr_safe
-        upper_distance_norm = upper_distance / iqr_safe
+        distances = np.maximum(lower_distance, upper_distance) / iqr_safe
 
-        # Take maximum distance
-        distances = np.maximum(lower_distance_norm, upper_distance_norm)
-
-        # Take maximum across features
         if distances.ndim > 1:
-            scores = np.max(distances, axis=1)
-        else:
-            scores = distances
-
-        return scores
+            return np.max(distances, axis=1)
+        return distances.reshape(-1)
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """

@@ -1,16 +1,32 @@
-"""
-Evaluation metrics for anomaly detection and smart money identification
-"""
-import numpy as np
+"""Typed metric helpers used across the smart money detection pipeline."""
+
+from __future__ import annotations
+
 from typing import Dict, Optional, Tuple
+
+import numpy as np
 from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    f1_score,
     precision_score,
     recall_score,
-    f1_score,
-    accuracy_score,
     roc_auc_score,
-    average_precision_score,
 )
+
+
+def _ensure_1d_boolean(array: np.ndarray, *, name: str) -> np.ndarray:
+    arr = np.asarray(array).reshape(-1)
+    if arr.dtype != np.bool_:
+        if not np.isin(np.unique(arr), [0, 1]).all():
+            raise ValueError(f"{name} must contain binary values")
+        arr = arr.astype(bool)
+    return arr
+
+
+def _ensure_same_length(y_true: np.ndarray, y_pred: np.ndarray) -> None:
+    if y_true.shape[0] != y_pred.shape[0]:
+        raise ValueError("y_true and y_pred must have the same number of samples")
 
 
 def compute_metrics(
@@ -29,38 +45,43 @@ def compute_metrics(
     Returns:
         Dictionary of metrics
     """
-    metrics = {}
+    y_true_bool = _ensure_1d_boolean(y_true, name="y_true")
+    y_pred_bool = _ensure_1d_boolean(y_pred, name="y_pred")
+    _ensure_same_length(y_true_bool, y_pred_bool)
 
-    # Confusion matrix components
-    tp = ((y_pred == 1) & (y_true == 1)).sum()
-    fp = ((y_pred == 1) & (y_true == 0)).sum()
-    tn = ((y_pred == 0) & (y_true == 0)).sum()
-    fn = ((y_pred == 0) & (y_true == 1)).sum()
+    metrics: Dict[str, float] = {}
 
-    metrics['tp'] = int(tp)
-    metrics['fp'] = int(fp)
-    metrics['tn'] = int(tn)
-    metrics['fn'] = int(fn)
+    tp = np.logical_and(y_pred_bool, y_true_bool).sum()
+    fp = np.logical_and(y_pred_bool, np.logical_not(y_true_bool)).sum()
+    tn = np.logical_and(np.logical_not(y_pred_bool), np.logical_not(y_true_bool)).sum()
+    fn = np.logical_and(np.logical_not(y_pred_bool), y_true_bool).sum()
+
+    metrics['tp'] = float(tp)
+    metrics['fp'] = float(fp)
+    metrics['tn'] = float(tn)
+    metrics['fn'] = float(fn)
 
     # Basic metrics
-    metrics['accuracy'] = accuracy_score(y_true, y_pred)
-    metrics['precision'] = precision_score(y_true, y_pred, zero_division=0)
-    metrics['recall'] = recall_score(y_true, y_pred, zero_division=0)
-    metrics['f1_score'] = f1_score(y_true, y_pred, zero_division=0)
+    metrics['accuracy'] = float(accuracy_score(y_true_bool, y_pred_bool))
+    metrics['precision'] = float(precision_score(y_true_bool, y_pred_bool, zero_division=0))
+    metrics['recall'] = float(recall_score(y_true_bool, y_pred_bool, zero_division=0))
+    metrics['f1_score'] = float(f1_score(y_true_bool, y_pred_bool, zero_division=0))
 
     # Specificity and sensitivity
-    metrics['specificity'] = tn / (tn + fp) if (tn + fp) > 0 else 0
-    metrics['sensitivity'] = tp / (tp + fn) if (tp + fn) > 0 else 0
+    metrics['specificity'] = float(tn / (tn + fp) if (tn + fp) > 0 else 0.0)
+    metrics['sensitivity'] = float(tp / (tp + fn) if (tp + fn) > 0 else 0.0)
 
     # False positive/negative rates
-    metrics['fpr'] = fp / (fp + tn) if (fp + tn) > 0 else 0
-    metrics['fnr'] = fn / (fn + tp) if (fn + tp) > 0 else 0
+    metrics['fpr'] = float(fp / (fp + tn) if (fp + tn) > 0 else 0.0)
+    metrics['fnr'] = float(fn / (fn + tp) if (fn + tp) > 0 else 0.0)
 
     # Score-based metrics if available
     if y_scores is not None:
+        scores = np.asarray(y_scores).reshape(-1)
+        _ensure_same_length(y_true_bool, scores)
         try:
-            metrics['roc_auc'] = roc_auc_score(y_true, y_scores)
-            metrics['avg_precision'] = average_precision_score(y_true, y_scores)
+            metrics['roc_auc'] = float(roc_auc_score(y_true_bool, scores))
+            metrics['avg_precision'] = float(average_precision_score(y_true_bool, scores))
         except ValueError:
             # Handle case where only one class is present
             pass
@@ -84,7 +105,10 @@ def compute_f1_score(
     Returns:
         F1 score
     """
-    return f1_score(y_true, y_pred, zero_division=0)
+    y_true_bool = _ensure_1d_boolean(y_true, name="y_true")
+    y_pred_bool = _ensure_1d_boolean(y_pred, name="y_pred")
+    _ensure_same_length(y_true_bool, y_pred_bool)
+    return float(f1_score(y_true_bool, y_pred_bool, zero_division=0))
 
 
 def compute_precision_recall(
@@ -101,8 +125,12 @@ def compute_precision_recall(
     Returns:
         Tuple of (precision, recall)
     """
-    precision = precision_score(y_true, y_pred, zero_division=0)
-    recall = recall_score(y_true, y_pred, zero_division=0)
+    y_true_bool = _ensure_1d_boolean(y_true, name="y_true")
+    y_pred_bool = _ensure_1d_boolean(y_pred, name="y_pred")
+    _ensure_same_length(y_true_bool, y_pred_bool)
+
+    precision = float(precision_score(y_true_bool, y_pred_bool, zero_division=0))
+    recall = float(recall_score(y_true_bool, y_pred_bool, zero_division=0))
 
     return precision, recall
 
@@ -129,30 +157,33 @@ def find_optimal_threshold(
     Returns:
         Tuple of (optimal_threshold, metric_value)
     """
-    best_metric = 0
-    best_threshold = 0.5
+    y_true_bool = _ensure_1d_boolean(y_true, name="y_true")
+    scores = np.asarray(y_scores, dtype=float).reshape(-1)
+    _ensure_same_length(y_true_bool, scores)
 
     thresholds = np.arange(min_threshold, max_threshold + step, step)
 
+    metric_lookup = {
+        'f1': lambda yt, yp: f1_score(yt, yp, zero_division=0),
+        'precision': lambda yt, yp: precision_score(yt, yp, zero_division=0),
+        'recall': lambda yt, yp: recall_score(yt, yp, zero_division=0),
+        'accuracy': lambda yt, yp: accuracy_score(yt, yp),
+    }
+
+    if metric not in metric_lookup:
+        raise ValueError(f"Unknown metric: {metric}")
+
+    best_threshold = 0.5
+    best_metric = -np.inf
+
     for threshold in thresholds:
-        y_pred = (y_scores >= threshold).astype(int)
-
-        if metric == 'f1':
-            current_metric = f1_score(y_true, y_pred, zero_division=0)
-        elif metric == 'precision':
-            current_metric = precision_score(y_true, y_pred, zero_division=0)
-        elif metric == 'recall':
-            current_metric = recall_score(y_true, y_pred, zero_division=0)
-        elif metric == 'accuracy':
-            current_metric = accuracy_score(y_true, y_pred)
-        else:
-            raise ValueError(f"Unknown metric: {metric}")
-
+        y_pred_bool = scores >= threshold
+        current_metric = metric_lookup[metric](y_true_bool, y_pred_bool)
         if current_metric > best_metric:
             best_metric = current_metric
             best_threshold = threshold
 
-    return best_threshold, best_metric
+    return float(best_threshold), float(best_metric)
 
 
 def compute_ensemble_diversity(predictions: np.ndarray) -> float:
@@ -166,22 +197,15 @@ def compute_ensemble_diversity(predictions: np.ndarray) -> float:
     Returns:
         Diversity score in [0, 1] (higher = more diverse)
     """
-    n_samples, n_members = predictions.shape
+    array = np.asarray(predictions)
+    if array.ndim != 2:
+        raise ValueError("predictions must be a 2-D array")
 
+    n_samples, n_members = array.shape
     if n_members < 2:
         return 0.0
 
-    # Compute pairwise disagreement
-    total_disagreement = 0
-    n_pairs = 0
-
-    for i in range(n_members):
-        for j in range(i + 1, n_members):
-            # Disagreement = fraction of samples where predictions differ
-            disagreement = (predictions[:, i] != predictions[:, j]).mean()
-            total_disagreement += disagreement
-            n_pairs += 1
-
-    diversity = total_disagreement / n_pairs if n_pairs > 0 else 0.0
-
-    return diversity
+    disagreement_matrix = array[:, :, None] != array[:, None, :]
+    upper_triangle = np.triu_indices(n_members, k=1)
+    pairwise_disagreement = disagreement_matrix[:, upper_triangle[0], upper_triangle[1]].mean(axis=0)
+    return float(pairwise_disagreement.mean())

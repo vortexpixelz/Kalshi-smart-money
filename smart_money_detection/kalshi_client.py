@@ -1,37 +1,52 @@
-"""
-Kalshi API client for fetching real market and trade data
+"""Resilient Kalshi API client with retry/backoff and typed helpers."""
 
-Official Kalshi API documentation: https://trading-api.readme.io/reference/getting-started
-"""
-import os
-import requests
-import pandas as pd
-from typing import Optional, Dict, List, Any
-from datetime import datetime, timedelta
+from __future__ import annotations
+
 import logging
+import os
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+
+class KalshiClientError(RuntimeError):
+    """Base error raised when Kalshi API communication fails."""
+
+
+class KalshiAPIError(KalshiClientError):
+    """Raised when the Kalshi API returns an error response."""
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class KalshiRateLimitError(KalshiAPIError):
+    """Raised when the API signals that the rate limit has been exceeded."""
 
 
 class KalshiClient:
-    """
-    Client for interacting with Kalshi API
+    """Client for interacting with the Kalshi API or local demo data."""
 
-    Supports both production and demo environments.
-    """
+    DEFAULT_TIMEOUT = 10.0
+    RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
         demo_mode: bool = False,
-    ):
-        """
-        Initialize Kalshi API client
+        *,
+        timeout: float = DEFAULT_TIMEOUT,
+        max_retries: int = 3,
+        backoff_factor: float = 0.5,
+    ) -> None:
+        """Create a new :class:`KalshiClient` instance."""
 
-        Args:
-            api_key: Kalshi API key (or set KALSHI_API_KEY env var)
-            api_base: API base URL
-            demo_mode: If True, use demo/mock data instead of real API
-        """
         self.api_key = api_key or os.getenv('KALSHI_API_KEY')
         resolved_api_base = api_base if api_base is not None else os.getenv(
             'KALSHI_API_BASE', 'https://api.elections.kalshi.com'
@@ -41,30 +56,60 @@ class KalshiClient:
 
         self.logger = logging.getLogger(__name__)
 
-        # Session for connection pooling
+        self._timeout = timeout
         self.session = requests.Session()
+
+        retry = Retry(
+            total=max_retries,
+            read=max_retries,
+            connect=max_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=self.RETRYABLE_STATUS_CODES,
+            allowed_methods=frozenset({'GET', 'POST', 'PUT', 'PATCH', 'DELETE'}),
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount('https://', adapter)
+        self.session.mount('http://', adapter)
+
         if self.api_key and not self.demo_mode:
             self.session.headers.update({
                 'Authorization': f'Bearer {self.api_key}',
                 'Content-Type': 'application/json',
             })
 
-    def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
-        """Make API request"""
+    def _request(self, method: str, endpoint: str, **kwargs: Any) -> Dict[str, Any]:
+        """Execute an HTTP request and return the parsed JSON payload."""
+
         url = f"{self.api_base}/{endpoint.lstrip('/')}"
+        timeout = kwargs.pop('timeout', self._timeout)
 
         try:
-            response = self.session.request(method, url, **kwargs)
+            response = self.session.request(method, url, timeout=timeout, **kwargs)
             response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"API request failed: {e}")
+        except requests.exceptions.HTTPError as exc:  # pragma: no cover - thin wrapper
+            status_code = exc.response.status_code if exc.response else None
+            message = f"Kalshi API request failed with status {status_code}: {exc}"
+            error_cls = (
+                KalshiRateLimitError if status_code == 429 else KalshiAPIError
+            )
             if self.demo_mode:
+                self.logger.warning("Falling back to mock data for endpoint %s", endpoint)
                 return self._get_mock_data(endpoint)
-            raise
+            raise error_cls(message, status_code=status_code) from exc
+        except requests.exceptions.RequestException as exc:  # pragma: no cover - defensive
+            message = f"Kalshi API request failed: {exc}"
+            if self.demo_mode:
+                self.logger.warning("Falling back to mock data for endpoint %s", endpoint)
+                return self._get_mock_data(endpoint)
+            raise KalshiClientError(message) from exc
+
+        try:
+            return response.json()
+        except ValueError as exc:  # pragma: no cover - unexpected response
+            raise KalshiAPIError("Kalshi API returned non-JSON response") from exc
 
     def _get_mock_data(self, endpoint: str) -> Dict[str, Any]:
-        """Return mock data for demo mode"""
+        """Return mock API payloads for demo mode usage."""
         if 'markets' in endpoint and endpoint.endswith('markets'):
             return self._mock_markets_list()
         elif 'market' in endpoint and 'trades' in endpoint:
@@ -74,7 +119,7 @@ class KalshiClient:
         return {}
 
     def _mock_markets_list(self) -> Dict[str, Any]:
-        """Mock market list response"""
+        """Return a mock market list response."""
         return {
             'markets': [
                 {
@@ -108,7 +153,7 @@ class KalshiClient:
         }
 
     def _mock_market_details(self) -> Dict[str, Any]:
-        """Mock market details response"""
+        """Return a mock market details response."""
         return {
             'market': {
                 'ticker': 'PRES-2024-WINNER',
@@ -123,7 +168,7 @@ class KalshiClient:
         }
 
     def _mock_trades(self) -> Dict[str, Any]:
-        """Mock trades response with realistic distribution"""
+        """Return a mock trades response with a realistic distribution."""
         import numpy as np
 
         np.random.seed(42)
@@ -164,53 +209,30 @@ class KalshiClient:
         status: str = 'active',
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """
-        Get list of markets
+        """Return a list of markets filtered by *status* and *limit*."""
 
-        Args:
-            status: Market status ('active', 'closed', 'settled')
-            limit: Maximum number of markets to return
-
-        Returns:
-            List of market dictionaries
-        """
         if self.demo_mode:
             data = self._mock_markets_list()
             return data.get('markets', [])
 
-        try:
-            response = self._request(
-                'GET',
-                '/trade-api/v2/markets',
-                params={'status': status, 'limit': limit}
-            )
-            return response.get('markets', [])
-        except Exception as e:
-            self.logger.error(f"Failed to fetch markets: {e}")
-            return []
+        response = self._request(
+            'GET',
+            '/trade-api/v2/markets',
+            params={'status': status, 'limit': limit},
+        )
+        return response.get('markets', [])
 
     def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
-        """
-        Get market details by ticker
+        """Return market details for *ticker* if available."""
 
-        Args:
-            ticker: Market ticker symbol (e.g., 'PRES-2024-WINNER')
-
-        Returns:
-            Market details dictionary
-        """
         if self.demo_mode:
             data = self._mock_market_details()
             market = data.get('market', {})
-            market['ticker'] = ticker  # Use requested ticker
+            market['ticker'] = ticker
             return market
 
-        try:
-            response = self._request('GET', f'/trade-api/v2/markets/{ticker}')
-            return response.get('market')
-        except Exception as e:
-            self.logger.error(f"Failed to fetch market {ticker}: {e}")
-            return None
+        response = self._request('GET', f'/trade-api/v2/markets/{ticker}')
+        return response.get('market')
 
     def get_trades(
         self,
@@ -219,78 +241,53 @@ class KalshiClient:
         min_ts: Optional[datetime] = None,
         max_ts: Optional[datetime] = None,
     ) -> pd.DataFrame:
-        """
-        Get trade history for a market
+        """Return trade history for *ticker* as a Pandas DataFrame."""
 
-        Args:
-            ticker: Market ticker symbol
-            limit: Maximum number of trades to return
-            min_ts: Minimum timestamp for trades
-            max_ts: Maximum timestamp for trades
-
-        Returns:
-            DataFrame with trade data
-        """
         if self.demo_mode:
             data = self._mock_trades()
             trades = data.get('trades', [])
         else:
-            try:
-                params = {'limit': limit}
-                if min_ts:
-                    params['min_ts'] = int(min_ts.timestamp())
-                if max_ts:
-                    params['max_ts'] = int(max_ts.timestamp())
+            params: Dict[str, Any] = {'limit': limit}
+            if min_ts:
+                params['min_ts'] = int(min_ts.timestamp())
+            if max_ts:
+                params['max_ts'] = int(max_ts.timestamp())
 
-                response = self._request(
-                    'GET',
-                    f'/trade-api/v2/markets/{ticker}/trades',
-                    params=params
-                )
-                trades = response.get('trades', [])
-            except Exception as e:
-                self.logger.error(f"Failed to fetch trades for {ticker}: {e}")
-                return pd.DataFrame()
+            response = self._request(
+                'GET', f'/trade-api/v2/markets/{ticker}/trades', params=params
+            )
+            trades = response.get('trades', [])
 
         if not trades:
             return pd.DataFrame()
 
-        # Convert to DataFrame
         df = pd.DataFrame(trades)
 
-        # Parse timestamps
         if 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+            df = df.sort_values('timestamp').reset_index(drop=True)
 
-        # Ensure numeric types
         if 'volume' in df.columns:
             df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
         if 'price' in df.columns:
             df['price'] = pd.to_numeric(df['price'], errors='coerce')
 
-        # Sort by timestamp
-        if 'timestamp' in df.columns:
-            df = df.sort_values('timestamp').reset_index(drop=True)
+        # Encourage efficient downstream processing via categorical types.
+        if 'side' in df.columns:
+            df['side'] = df['side'].astype('category')
 
         return df
 
     def get_market_summary(self, ticker: str) -> Dict[str, Any]:
-        """
-        Get comprehensive market summary including stats
+        """Return a concise market summary enriched with trade statistics."""
 
-        Args:
-            ticker: Market ticker symbol
-
-        Returns:
-            Dictionary with market summary
-        """
         market = self.get_market(ticker)
         if not market:
             return {}
 
         trades = self.get_trades(ticker, limit=1000)
 
-        summary = {
+        summary: Dict[str, Any] = {
             'ticker': ticker,
             'title': market.get('title', ''),
             'current_price': market.get('yes_price', 0),
@@ -301,18 +298,22 @@ class KalshiClient:
         }
 
         if not trades.empty:
-            summary.update({
-                'n_trades': len(trades),
-                'avg_trade_size': trades['volume'].mean(),
-                'median_trade_size': trades['volume'].median(),
-                'max_trade_size': trades['volume'].max(),
-                'total_volume_24h': trades[
-                    trades['timestamp'] > (datetime.now() - timedelta(days=1))
-                ]['volume'].sum(),
-            })
+            last_day = datetime.now() - timedelta(days=1)
+            summary.update(
+                {
+                    'n_trades': int(trades.shape[0]),
+                    'avg_trade_size': float(trades['volume'].mean()),
+                    'median_trade_size': float(trades['volume'].median()),
+                    'max_trade_size': float(trades['volume'].max()),
+                    'total_volume_24h': float(
+                        trades.loc[trades['timestamp'] > last_day, 'volume'].sum()
+                    ),
+                }
+            )
 
         return summary
 
-    def close(self):
-        """Close HTTP session"""
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+
         self.session.close()
