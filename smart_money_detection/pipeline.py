@@ -307,15 +307,14 @@ class SmartMoneyDetector:
 
         volumes = trades[volume_col].values.reshape(-1, 1)
 
-        # Get predictions from all detectors
+        # Get predictions and scores from all detectors with single scoring pass
         committee_predictions = []
         committee_scores = []
 
         for detector in self.detectors:
-            pred = detector.predict(volumes)
-            score = detector.score(volumes)
-            committee_predictions.append(pred)
-            committee_scores.append(score)
+            predictions, scores = detector.predict_with_scores(volumes)
+            committee_predictions.append(predictions)
+            committee_scores.append(scores)
 
         committee_predictions = np.column_stack(committee_predictions)
         committee_scores = np.column_stack(committee_scores)

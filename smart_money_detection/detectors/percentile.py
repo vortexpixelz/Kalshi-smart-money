@@ -122,40 +122,17 @@ class PercentileDetector(BaseDetector):
 
         return scores
 
+    def _scores_to_predictions(
+        self,
+        scores: np.ndarray,
+        X: Union[np.ndarray, pd.DataFrame, None] = None,
+    ) -> np.ndarray:
+        predictions = (np.asarray(scores) > 0).astype(int)
+        return predictions
+
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Predict anomaly labels (0 = normal, 1 = anomaly)
-
-        Args:
-            X: Data to predict of shape (n_samples, n_features)
-
-        Returns:
-            Binary predictions of shape (n_samples,)
-        """
-        self.check_is_fitted()
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values
-        else:
-            X_values = X
-
-        if self.two_sided:
-            # Anomaly if outside either threshold
-            predictions = (
-                (X_values > self.upper_threshold_) | (X_values < self.lower_threshold_)
-            )
-        else:
-            # Anomaly if above upper threshold
-            predictions = X_values > self.upper_threshold_
-
-        # Any feature exceeds threshold -> anomaly
-        if predictions.ndim > 1:
-            predictions = np.any(predictions, axis=1)
-        else:
-            predictions = predictions.flatten()
-
-        return predictions.astype(int)
+        predictions, _ = self.predict_with_scores(X)
+        return predictions
 
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
