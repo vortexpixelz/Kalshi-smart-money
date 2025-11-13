@@ -307,7 +307,17 @@ class SmartMoneyDetector:
 
         volumes = trades[volume_col].values.reshape(-1, 1)
 
+        codex/add-context-features-to-manual-reviews
+        context = None
+        if timestamp_col in trades.columns:
+            timestamps = trades[timestamp_col]
+            if isinstance(timestamps, pd.Series) and timestamps.notna().any():
+                context = self._get_temporal_context(timestamps)
+
+        # Get predictions from all detectors
+
         # Get predictions and scores from all detectors with single scoring pass
+        main
         committee_predictions = []
         committee_scores = []
 
@@ -320,7 +330,7 @@ class SmartMoneyDetector:
         committee_scores = np.column_stack(committee_scores)
 
         # Select queries using QBC
-        ensemble_scores = self.ensemble.score(volumes)
+        ensemble_scores = self.ensemble.score(volumes, context)
 
         query_indices = self.query_strategy.select_queries(
             volumes,
