@@ -210,25 +210,31 @@ class FeedbackManager:
         if len(labels) < 5:  # Need minimum samples
             return
 
-        best_f1 = 0
         best_threshold = 0.5
 
-        # Grid search
-        for threshold in np.arange(0.3, 0.71, 0.01):
-            predictions = (scores >= threshold).astype(int)
+        thresholds = np.arange(0.3, 0.71, 0.01)
 
-            tp = ((predictions == 1) & (labels == 1)).sum()
-            fp = ((predictions == 1) & (labels == 0)).sum()
-            fn = ((predictions == 0) & (labels == 1)).sum()
+        labels_bool = labels.astype(bool)
+        scores = scores.astype(float)
 
-            if (tp + fp) > 0 and (tp + fn) > 0:
-                precision = tp / (tp + fp)
-                recall = tp / (tp + fn)
-                f1 = 2 * precision * recall / (precision + recall)
+        # Evaluate all thresholds simultaneously using broadcasting
+        predictions = scores[:, None] >= thresholds[None, :]
 
-                if f1 > best_f1:
-                    best_f1 = f1
-                    best_threshold = threshold
+        tp = np.sum(predictions & labels_bool[:, None], axis=0)
+        fp = np.sum(predictions & (~labels_bool)[:, None], axis=0)
+        fn = np.sum((~predictions) & labels_bool[:, None], axis=0)
+
+        denominator = 2 * tp + fp + fn
+        f1_scores = np.divide(
+            2 * tp,
+            denominator,
+            out=np.zeros_like(denominator, dtype=float),
+            where=denominator > 0,
+        )
+
+        if np.any(f1_scores > 0):
+            best_idx = np.argmax(f1_scores)
+            best_threshold = float(thresholds[best_idx])
 
         self.optimal_threshold = best_threshold
 
