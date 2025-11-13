@@ -94,35 +94,25 @@ class RelativeVolumeDetector(BaseDetector):
 
         return scores
 
+    def _scores_to_predictions(
+        self,
+        scores: np.ndarray,
+        X: Union[np.ndarray, pd.DataFrame, None] = None,
+    ) -> np.ndarray:
+        scores_arr = np.asarray(scores)
+        predictions = scores_arr > self.threshold_multiplier
+
+        if self.absolute_threshold is not None and X is not None:
+            if isinstance(X, pd.DataFrame):
+                X_values = X.values.flatten()
+            else:
+                X_values = np.asarray(X).flatten()
+            predictions = np.logical_or(predictions, X_values > self.absolute_threshold)
+
+        return predictions.astype(int)
+
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Predict anomaly labels (0 = normal, 1 = anomaly)
-
-        Args:
-            X: Volume data to predict of shape (n_samples, 1) or (n_samples,)
-
-        Returns:
-            Binary predictions of shape (n_samples,)
-        """
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values.flatten()
-        else:
-            X_values = X.flatten()
-
-        scores = self.score(X)
-
-        # Check relative threshold
-        relative_anomaly = scores > self.threshold_multiplier
-
-        # Check absolute threshold if provided
-        if self.absolute_threshold is not None:
-            absolute_anomaly = X_values > self.absolute_threshold
-            predictions = (relative_anomaly | absolute_anomaly).astype(int)
-        else:
-            predictions = relative_anomaly.astype(int)
-
+        predictions, _ = self.predict_with_scores(X)
         return predictions
 
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
