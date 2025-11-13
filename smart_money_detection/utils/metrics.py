@@ -1,8 +1,9 @@
 """
 Evaluation metrics for anomaly detection and smart money identification
 """
-import numpy as np
 from typing import Dict, Optional, Tuple
+
+import numpy as np
 from sklearn.metrics import (
     precision_score,
     recall_score,
