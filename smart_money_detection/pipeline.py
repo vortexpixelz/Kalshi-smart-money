@@ -47,7 +47,6 @@ class SmartMoneyDetector:
         self.config = config or default_config
 
         # Setup logging
-        logging.basicConfig(level=self.config.log_level)
         self.logger = logging.getLogger(__name__)
 
         # Initialize components
