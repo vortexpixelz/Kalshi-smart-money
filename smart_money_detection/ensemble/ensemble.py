@@ -3,8 +3,9 @@ Main ensemble class coordinating multiple detectors and weighting strategies
 """
 import numpy as np
 import pandas as pd
-from typing import List, Optional, Dict, Any, Union
-from ..detectors.base import BaseDetector
+from typing import Any, Dict, List, Optional, Union
+
+from ..detectors.base import DetectorProtocol
 from .weighting import (
     UniformWeighting,
     MultiplicativeWeightsUpdate,
@@ -30,7 +31,7 @@ class AnomalyEnsemble:
 
     def __init__(
         self,
-        detectors: List[BaseDetector],
+        detectors: List[DetectorProtocol],
         weighting_method: str = 'thompson',
         weighting_params: Optional[Dict[str, Any]] = None,
     ):
