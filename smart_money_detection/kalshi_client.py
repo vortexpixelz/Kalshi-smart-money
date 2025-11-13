@@ -49,6 +49,23 @@ class KalshiClient:
                 'Content-Type': 'application/json',
             })
 
+    def verify_authentication(self) -> bool:
+        """Check that the client can authenticate against the API."""
+        if self.demo_mode:
+            return True
+
+        try:
+            response = self._request(
+                'GET',
+                '/trade-api/v2/markets',
+                params={'status': 'active', 'limit': 1},
+            )
+        except Exception as exc:  # pragma: no cover - exercised in integration tests
+            self.logger.error("Authentication verification failed: %s", exc)
+            return False
+
+        return bool(response.get('markets'))
+
     def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         """Make API request"""
         url = f"{self.api_base}/{endpoint.lstrip('/')}"
