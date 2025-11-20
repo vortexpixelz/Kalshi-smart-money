@@ -133,7 +133,8 @@ class FeedbackManager:
         sample_ids = [f['sample_id'] for f in self.feedback_data]
         labels = np.array([f['y_true'] for f in self.feedback_data])
         scores = np.array(
-            [f['score'] if f['score'] is not None else 0.5 for f in self.feedback_data]
+            [f['score'] if f['score'] is not None else np.nan for f in self.feedback_data],
+            dtype=float,
         )
 
         return sample_ids, labels, scores
@@ -207,9 +208,16 @@ class FeedbackManager:
         """
         _, labels, scores = self.get_labeled_data()
 
-        if len(labels) < 5:  # Need minimum samples
+        valid_mask = ~np.isnan(scores)
+        if valid_mask.sum() < 5:  # Need minimum samples with scores
             return
 
+        codex/refactor-_update_optimal_threshold-with-vectorization
+        labels = labels[valid_mask]
+        scores = scores[valid_mask]
+
+        best_f1 = 0
+        main
         best_threshold = 0.5
 
         thresholds = np.arange(0.3, 0.71, 0.01)

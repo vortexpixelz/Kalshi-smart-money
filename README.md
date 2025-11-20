@@ -121,6 +121,12 @@ This implementation is based on cutting-edge research from 2020-2025:
 
 Customize detection parameters via `Config`:
 
+### Logging
+
+`SmartMoneyDetector` now uses the existing logging configuration instead of configuring
+global logging on initialization. Configure logging in your application before creating
+the detector if you need specific handlers or log levels.
+
 ```python
 from smart_money_detection.config import Config
 
