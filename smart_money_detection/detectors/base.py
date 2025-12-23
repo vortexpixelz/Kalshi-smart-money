@@ -43,6 +43,12 @@ class BaseDetector(ABC):
         self.is_fitted_: bool = False
         self.n_samples_seen_: int = 0
 
+    @property
+    def name(self) -> str:
+        """Human-readable detector name."""
+
+        return self.state.name
+
     # ------------------------------------------------------------------
     # Template methods
     # ------------------------------------------------------------------

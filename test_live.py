@@ -11,10 +11,12 @@ from pathlib import Path
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-import pandas as pd
-import numpy as np
-from datetime import datetime
 import logging
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import pytest
 
 from smart_money_detection import SmartMoneyDetector
 from smart_money_detection.kalshi_client import KalshiClient
@@ -43,21 +45,73 @@ def print_section(text: str):
     print(f"{'─' * 70}\n")
 
 
-def test_kalshi_connection():
+def _build_detector(market: dict, trades: pd.DataFrame) -> SmartMoneyDetector:
+    """Create and fit a :class:`SmartMoneyDetector` for the given market."""
+    config = Config()
+
+    market_volume = market.get('volume', 0)
+    if market_volume > 1000000:
+        config.smart_money.major_market_dollar_threshold = 10000
+    else:
+        config.smart_money.niche_market_dollar_threshold = 1000
+
+    config.ensemble.weighting_method = 'thompson'
+
+    detector = SmartMoneyDetector(config)
+    detector.fit(
+        trades,
+        volume_col='volume',
+        timestamp_col='timestamp',
+        price_col='price',
+    )
+    return detector
+
+
+@pytest.fixture(scope='module')
+def client() -> KalshiClient:
+    """Demo-mode Kalshi client for offline testing."""
+    return KalshiClient(demo_mode=True)
+
+
+@pytest.fixture(scope='module')
+def markets(client: KalshiClient) -> list:
+    """Fetch demo markets or skip if none are available."""
+    market_list = client.get_markets(limit=10)
+    if not market_list:
+        pytest.skip('No demo markets available')
+    return market_list
+
+
+@pytest.fixture(scope='module')
+def market(markets: list) -> dict:
+    return markets[0]
+
+
+@pytest.fixture(scope='module')
+def trades(client: KalshiClient, market: dict) -> pd.DataFrame:
+    trade_history = client.get_trades(market['ticker'], limit=1000)
+    if trade_history.empty:
+        pytest.skip('No trade data available in demo mode')
+    return trade_history
+
+
+@pytest.fixture(scope='module')
+def detector(market: dict, trades: pd.DataFrame) -> SmartMoneyDetector:
+    return _build_detector(market, trades)
+
+
+@pytest.fixture(scope='module')
+def predictions(detector: SmartMoneyDetector, trades: pd.DataFrame) -> pd.Series:
+    return detector.predict(trades)
+
+
+def test_kalshi_connection(client: KalshiClient, markets: list):
     """Test Kalshi API connection"""
     print_header("🔌 Testing Kalshi API Connection")
 
-    # Initialize client (will use demo mode if no API key)
-    client = KalshiClient(demo_mode=True)
-
-    # Get markets
     print("Fetching available markets...")
-    markets = client.get_markets(limit=10)
 
-    if not markets:
-        print("❌ Failed to fetch markets")
-        return None
-
+    assert markets, "Expected at least one demo market"
     print(f"✅ Successfully connected! Found {len(markets)} markets\n")
 
     # Display markets
@@ -73,15 +127,12 @@ def test_kalshi_connection():
 
         print(f"{ticker:<25} ${volume:>12,.0f}  {price:>6}¢  {status}")
 
-    return client, markets
 
-
-def test_smart_money_detection(client: KalshiClient, markets: list):
+def test_smart_money_detection(client: KalshiClient, market: dict, markets: list, trades: pd.DataFrame, detector: SmartMoneyDetector, predictions: pd.Series):
     """Test smart money detection on a market"""
     print_header("🎯 Testing Smart Money Detection")
 
     # Select a market
-    market = markets[0]
     ticker = market.get('ticker', 'UNKNOWN')
     title = market.get('title', 'Unknown Market')
 
@@ -90,15 +141,10 @@ def test_smart_money_detection(client: KalshiClient, markets: list):
     print(f"Volume: ${market.get('volume', 0):,.0f}")
     print(f"Open Interest: ${market.get('open_interest', 0):,.0f}\n")
 
-    # Fetch trades
     print_section("📊 Fetching Trade Data")
     print("Retrieving trade history...")
 
-    trades = client.get_trades(ticker, limit=1000)
-
-    if trades.empty:
-        print("❌ No trade data available")
-        return
+    assert not trades.empty, "Expected trade data for demo market"
 
     print(f"✅ Fetched {len(trades)} trades")
     print(f"   Time range: {trades['timestamp'].min()} to {trades['timestamp'].max()}")
@@ -106,39 +152,11 @@ def test_smart_money_detection(client: KalshiClient, markets: list):
     print(f"   Avg trade size: ${trades['volume'].mean():.2f}")
     print(f"   Max trade size: ${trades['volume'].max():.2f}")
 
-    # Initialize detector
     print_section("🤖 Initializing Smart Money Detector")
-
-    config = Config()
-
-    # Configure based on market size
-    market_volume = market.get('volume', 0)
-    if market_volume > 1000000:
-        print("   Detected: MAJOR MARKET (using high thresholds)")
-        config.smart_money.major_market_dollar_threshold = 10000
-    else:
-        print("   Detected: NICHE MARKET (using lower thresholds)")
-        config.smart_money.niche_market_dollar_threshold = 1000
-
-    config.ensemble.weighting_method = 'thompson'
-    print(f"   Ensemble method: {config.ensemble.weighting_method}")
-
-    detector = SmartMoneyDetector(config)
-
-    # Fit detector
-    print("\n   Fitting detector on trade history...")
-    detector.fit(
-        trades,
-        volume_col='volume',
-        timestamp_col='timestamp',
-        price_col='price'
-    )
-    print("   ✅ Detector fitted")
+    print(f"   Ensemble method: {detector.config.ensemble.weighting_method}")
 
     # Make predictions
     print_section("🔍 Detecting Smart Money Trades")
-
-    predictions = detector.predict(trades)
     scores = detector.score(trades)
 
     n_smart_money = predictions.sum()
@@ -243,8 +261,6 @@ def test_smart_money_detection(client: KalshiClient, markets: list):
     print(f"\n   💡 These are the trades where detectors disagree most.")
     print(f"      Manually reviewing these would maximize learning efficiency!")
 
-    return detector, trades, predictions
-
 
 def test_feedback_loop(detector, trades, predictions):
     """Test feedback integration"""
@@ -308,23 +324,29 @@ def main():
     input("Press Enter to start... (or Ctrl+C to cancel)")
 
     try:
-        # Test 1: Connection
-        result = test_kalshi_connection()
-        if result is None:
+        client = KalshiClient(demo_mode=True)
+        markets = client.get_markets(limit=10)
+
+        if not markets:
             print("\n❌ Connection test failed. Exiting.")
             return 1
 
-        client, markets = result
+        test_kalshi_connection(client, markets)
 
-        # Test 2: Detection
-        result = test_smart_money_detection(client, markets)
-        if result is None:
+        market = markets[0]
+        trades = client.get_trades(market['ticker'], limit=1000)
+
+        if trades.empty:
             print("\n❌ Detection test failed. Exiting.")
             return 1
 
-        detector, trades, predictions = result
+        detector = _build_detector(market, trades)
+        predictions = detector.predict(trades)
 
-        # Test 3: Feedback
+        test_smart_money_detection(
+            client, market, markets, trades, detector, predictions
+        )
+
         test_feedback_loop(detector, trades, predictions)
 
         # Summary
