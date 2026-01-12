@@ -21,7 +21,9 @@ statsmodels>=0.14.0
 
 # API and data handling
 requests>=2.31.0
+httpx>=0.24.0
 python-dotenv>=1.0.0
+PyYAML>=6.0
 
 # Visualization (optional but recommended)
 matplotlib>=3.7.0

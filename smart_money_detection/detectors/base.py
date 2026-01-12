@@ -1,10 +1,30 @@
-"""
-Base class for anomaly detectors
-"""
+"""Interfaces and base classes for anomaly detectors."""
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from typing import Optional, Protocol, Union, runtime_checkable
+
 import numpy as np
 import pandas as pd
-from typing import Union, Optional, Tuple
+
+
+@runtime_checkable
+class DetectorProtocol(Protocol):
+    """Structural protocol for detector implementations."""
+
+    name: str
+    is_fitted_: bool
+
+    def fit(
+        self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None
+    ) -> "DetectorProtocol":
+        ...
+
+    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        ...
+
+    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        ...
 
 
 class BaseDetector(ABC):
@@ -27,7 +47,9 @@ class BaseDetector(ABC):
         self.n_samples_seen_ = 0
 
     @abstractmethod
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
+    def fit(
+        self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None
+    ) -> "BaseDetector":
         """
         Fit the detector on training data
 

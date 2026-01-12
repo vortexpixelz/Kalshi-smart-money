@@ -11,7 +11,7 @@ This example demonstrates:
 import numpy as np
 import pandas as pd
 from smart_money_detection import SmartMoneyDetector
-from smart_money_detection.config import Config
+from smart_money_detection.config import load_config
 
 # Example: Generate synthetic trade data
 def generate_synthetic_trades(n_trades=1000, n_informed=50):
@@ -58,7 +58,7 @@ def main():
 
     # 2. Initialize detector with custom config
     print("2. Initializing smart money detector...")
-    config = Config()
+    config = load_config()
     config.ensemble.weighting_method = 'thompson'  # Thompson Sampling
     config.active_learning.query_strategy = 'qbc'  # Query-by-Committee
 

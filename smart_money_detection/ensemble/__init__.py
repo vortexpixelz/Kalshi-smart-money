@@ -2,7 +2,7 @@
 Ensemble weighting and combination methods
 """
 
-from .base import BaseEnsemble
+from .base import BaseEnsemble, EnsembleProtocol
 from .weighting import (
     UniformWeighting,
     MultiplicativeWeightsUpdate,
@@ -13,6 +13,7 @@ from .ensemble import AnomalyEnsemble
 
 __all__ = [
     "BaseEnsemble",
+    "EnsembleProtocol",
     "UniformWeighting",
     "MultiplicativeWeightsUpdate",
     "ThompsonSamplingWeighting",

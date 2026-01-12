@@ -18,7 +18,7 @@ import logging
 
 from smart_money_detection import SmartMoneyDetector
 from smart_money_detection.kalshi_client import KalshiClient
-from smart_money_detection.config import Config
+from smart_money_detection.config import load_config
 from smart_money_detection.models import VPINClassifier
 
 # Setup logging
@@ -109,7 +109,7 @@ def test_smart_money_detection(client: KalshiClient, markets: list):
     # Initialize detector
     print_section("🤖 Initializing Smart Money Detector")
 
-    config = Config()
+    config = load_config()
 
     # Configure based on market size
     market_volume = market.get('volume', 0)

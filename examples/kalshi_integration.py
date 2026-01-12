@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from smart_money_detection import SmartMoneyDetector
-from smart_money_detection.config import Config
+from smart_money_detection.config import load_config
 from smart_money_detection.models import VPINClassifier
 
 
@@ -95,7 +95,7 @@ def detect_smart_money_kalshi(market_id: str, api_key: str = None):
 
     # 3. Initialize detector with market-specific config
     print("3. Initializing smart money detector...")
-    config = Config()
+    config = load_config()
 
     # Adjust thresholds based on market size
     if market['volume'] > 500000:
