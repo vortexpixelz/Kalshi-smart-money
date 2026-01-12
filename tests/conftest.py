@@ -1,5 +1,6 @@
 import os
 import sys
+ codex/add-automated-tests-for-kalshi-client-ts4k5p
 import time
 from pathlib import Path
 from typing import Callable, Dict, Optional
@@ -110,3 +111,7 @@ def sandbox_retry() -> Callable[[Callable[[], object], int, float], object]:
         return None
 
     return _retry
+
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+ main
