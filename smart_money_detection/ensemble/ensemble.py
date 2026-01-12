@@ -3,9 +3,14 @@ Main ensemble class coordinating multiple detectors and weighting strategies
 """
 import numpy as np
 import pandas as pd
+= codex/refactor-config-and-orchestration-layers
 from typing import Any, Dict, List, Optional, Union
 
 from ..detectors.base import DetectorProtocol
+
+from typing import List, Optional, Dict, Any, Union, Tuple
+from ..detectors.base import BaseDetector
+ main
 from .weighting import (
     UniformWeighting,
     MultiplicativeWeightsUpdate,
@@ -136,17 +141,7 @@ class AnomalyEnsemble:
         Returns:
             Anomaly scores
         """
-        # Get scores from all detectors
-        detector_scores = []
-        for detector in self.detectors:
-            scores = detector.score(X)
-            # Normalize scores to [0, 1]
-            if scores.max() > scores.min():
-                scores = (scores - scores.min()) / (scores.max() - scores.min())
-            detector_scores.append(scores)
-
-        # Stack scores: shape (n_samples, n_detectors)
-        detector_scores = np.column_stack(detector_scores)
+        detector_scores, _ = self._compute_normalized_score_matrix(X)
 
         # Combine using weights
         ensemble_scores = self.weighting.combine_scores(detector_scores)
@@ -170,17 +165,7 @@ class AnomalyEnsemble:
         Returns:
             Updated weights
         """
-        # Get scores from all detectors
-        detector_scores = []
-        for detector in self.detectors:
-            scores = detector.score(X)
-            # Normalize
-            if scores.max() > scores.min():
-                scores = (scores - scores.min()) / (scores.max() - scores.min())
-            detector_scores.append(scores)
-
-        # Stack scores: shape (n_samples, n_detectors)
-        detector_scores = np.column_stack(detector_scores)
+        detector_scores, _ = self._compute_normalized_score_matrix(X)
 
         # Update weights
         updated_weights = self.weighting.update_weights(
@@ -209,15 +194,12 @@ class AnomalyEnsemble:
         Returns:
             Dictionary mapping detector names to scores
         """
-        contributions = {}
+        _, normalized_scores = self._compute_normalized_score_matrix(X)
         weights = self.get_weights()
 
-        for i, detector in enumerate(self.detectors):
-            scores = detector.score(X)
-            # Normalize
-            if scores.max() > scores.min():
-                scores = (scores - scores.min()) / (scores.max() - scores.min())
+        contributions = {}
 
+        for i, (detector, scores) in enumerate(zip(self.detectors, normalized_scores)):
             contributions[detector.name] = {
                 'scores': scores,
                 'weight': weights[i],
@@ -225,6 +207,27 @@ class AnomalyEnsemble:
             }
 
         return contributions
+
+    def _compute_normalized_score_matrix(
+        self, X: Union[np.ndarray, pd.DataFrame]
+    ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Compute and normalize detector scores, returning stacked matrix and list."""
+
+        normalized_scores: List[np.ndarray] = []
+
+        for detector in self.detectors:
+            scores = detector.score(X)
+            min_score = np.min(scores)
+            max_score = np.max(scores)
+
+            if max_score > min_score:
+                scores = (scores - min_score) / (max_score - min_score)
+
+            normalized_scores.append(scores)
+
+        detector_scores = np.column_stack(normalized_scores)
+
+        return detector_scores, normalized_scores
 
     def get_ensemble_agreement(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """

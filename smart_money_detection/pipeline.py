@@ -16,9 +16,22 @@ from .detectors import (
     ZScoreDetector,
 )
 from .ensemble import AnomalyEnsemble
+ codex/refactor-config-and-orchestration-layers
 from .models import SimplifiedPIN, VPINClassifier
 from .services import DataIngestionService, DetectionService
 from .utils import bayesian_optimize_weights, compute_metrics, find_optimal_threshold
+
+from .features import TemporalFeatureEncoder
+from .models import VPIN, VPINClassifier, SimplifiedPIN
+from .active_learning import QueryByCommittee, FeedbackManager
+from .utils import (
+    compute_metrics,
+    find_optimal_threshold,
+    bayesian_optimize_weights,
+    gradient_optimize_weights,
+)
+from .utils.optimization import grid_search_weights
+ main
 
 
 class SmartMoneyDetector:
@@ -57,7 +70,6 @@ class SmartMoneyDetector:
         self.config = config or load_config()
 
         # Setup logging
-        logging.basicConfig(level=self.config.log_level)
         self.logger = logging.getLogger(__name__)
 
         # Initialize services
@@ -74,6 +86,7 @@ class SmartMoneyDetector:
         # State tracking
         self.is_fitted = False
         self.n_samples_seen = 0
+        self._detector_score_cache: Dict[Any, np.ndarray] = {}
 
     def _build_detection_service(self) -> DetectionService:
         """Construct detectors and the ensemble service."""
@@ -243,7 +256,34 @@ class SmartMoneyDetector:
         )
 
         # Get ensemble scores
+ codex/refactor-config-and-orchestration-layers
         scores = self.detection_service.score(volumes, context)
+
+        detector_scores = []
+        for detector in self.detectors:
+            raw_scores = np.asarray(detector.score(volumes)).flatten()
+            if raw_scores.size != len(volumes):
+                raise ValueError(
+                    f"Detector {detector.name} returned unexpected score shape."
+                )
+            if raw_scores.max() > raw_scores.min():
+                normalized = (raw_scores - raw_scores.min()) / (
+                    raw_scores.max() - raw_scores.min()
+                )
+            else:
+                normalized = raw_scores
+            detector_scores.append(normalized)
+
+        detector_scores = (
+            np.column_stack(detector_scores) if detector_scores else np.empty((len(volumes), 0))
+        )
+
+        # Cache detector scores for later optimization
+        for idx, sample_id in enumerate(trades.index):
+            self._detector_score_cache[sample_id] = detector_scores[idx].copy()
+
+        scores = self.ensemble.weighting.combine_scores(detector_scores)
+ main
 
         return scores
 
@@ -273,13 +313,39 @@ class SmartMoneyDetector:
 
         volumes = self.data_service.extract_volumes(trades, volume_col)
 
+        codex/add-context-features-to-manual-reviews
+        context = None
+        if timestamp_col in trades.columns:
+            timestamps = trades[timestamp_col]
+            if isinstance(timestamps, pd.Series) and timestamps.notna().any():
+                context = self._get_temporal_context(timestamps)
+
         # Get predictions from all detectors
+ codex/refactor-config-and-orchestration-layers
         committee_predictions, committee_scores = self.detection_service.committee_outputs(
             volumes
         )
 
         # Select queries using QBC
         ensemble_scores = self.detection_service.score(volumes)
+
+
+        # Get predictions and scores from all detectors with single scoring pass
+        main
+        committee_predictions = []
+        committee_scores = []
+
+        for detector in self.detectors:
+            predictions, scores = detector.predict_with_scores(volumes)
+            committee_predictions.append(predictions)
+            committee_scores.append(scores)
+
+        committee_predictions = np.column_stack(committee_predictions)
+        committee_scores = np.column_stack(committee_scores)
+
+        # Select queries using QBC
+        ensemble_scores = self.ensemble.score(volumes, context)
+ main
 
         query_indices = self.query_strategy.select_queries(
             volumes,
@@ -314,7 +380,26 @@ class SmartMoneyDetector:
             update_weights: If True, update ensemble weights based on feedback
         """
         # Add to feedback manager
-        self.feedback_manager.add_batch_feedback(sample_ids, labels)
+        weights = self.ensemble.get_weights()
+        ensemble_scores: List[Optional[float]] = []
+        predictions: List[Optional[int]] = []
+
+        for sample_id in sample_ids:
+            cached_scores = self._detector_score_cache.get(sample_id)
+            if cached_scores is None:
+                ensemble_scores.append(None)
+                predictions.append(None)
+            else:
+                score = float(np.dot(cached_scores, weights))
+                ensemble_scores.append(score)
+                predictions.append(int(score >= 0.5))
+
+        self.feedback_manager.add_batch_feedback(
+            sample_ids,
+            labels,
+            y_pred=predictions,
+            scores=ensemble_scores,
+        )
 
         self.logger.info(f"Added feedback for {len(labels)} samples")
 
@@ -383,14 +468,91 @@ class SmartMoneyDetector:
                 "Recommend waiting until 10-50 samples before optimizing weights."
             )
 
-        # This is a placeholder - in practice you'd need the actual detector scores
-        # for the labeled samples
         self.logger.info(f"Optimizing ensemble weights using {method} method")
 
+ codex/refactor-config-and-orchestration-layers
         # Return current weights as placeholder
         current_weights = self.detection_service.get_weights()
 
-        return current_weights, 0.0
+        # Gather cached detector scores for labeled samples
+        cached_scores = []
+        cached_labels = []
+        missing_samples = []
+
+        for sample_id, label in zip(sample_ids, labels):
+            scores = self._detector_score_cache.get(sample_id)
+            if scores is None:
+                missing_samples.append(sample_id)
+                continue
+            cached_scores.append(scores)
+            cached_labels.append(label)
+
+        if missing_samples:
+            self.logger.warning(
+                "No cached detector scores available for samples: %s", missing_samples
+            )
+
+        if not cached_scores:
+            self.logger.error("Cannot optimize weights without cached detector scores.")
+            return self.ensemble.get_weights(), 0.0
+
+        detector_scores = np.vstack(cached_scores)
+        y_true = np.array(cached_labels)
+
+        def evaluate_weights(weights: np.ndarray) -> float:
+            ensemble_scores = np.dot(detector_scores, weights)
+            y_pred = (ensemble_scores >= 0.5).astype(int)
+            metrics = compute_metrics(y_true, y_pred, ensemble_scores)
+            return metrics.get('f1_score', 0.0)
+
+        baseline_weights = self.ensemble.get_weights()
+        baseline_metric = evaluate_weights(baseline_weights)
+
+        method = method.lower()
+        if method == 'bayesian':
+            optimal_weights, best_metric = bayesian_optimize_weights(
+                detector_scores,
+                y_true,
+                n_iterations=n_iterations,
+            )
+        elif method == 'gradient':
+            optimal_weights, _ = gradient_optimize_weights(
+                detector_scores,
+                y_true,
+                max_iter=max(n_iterations, 1),
+            )
+            best_metric = evaluate_weights(optimal_weights)
+        elif method == 'grid':
+            optimal_weights, best_metric = grid_search_weights(
+                detector_scores,
+                y_true,
+                metric_fn=lambda yt, yp: compute_metrics(yt, yp).get('f1_score', 0.0),
+            )
+        else:
+            raise ValueError(f"Unknown optimization method: {method}")
+
+        if optimal_weights is None:
+            self.logger.error("Optimization did not return valid weights.")
+            return baseline_weights, baseline_metric
+
+        # Normalize weights to ensure they sum to 1
+        if optimal_weights.sum() > 0:
+            optimal_weights = optimal_weights / optimal_weights.sum()
+
+        # Update ensemble weights
+        self.ensemble.weighting.weights = optimal_weights
+
+        improvement = best_metric - baseline_metric
+        self.logger.info(
+            "Weight optimization completed. Baseline F1: %.4f, Optimized F1: %.4f, "
+            "Improvement: %.4f",
+            baseline_metric,
+            best_metric,
+            improvement,
+        )
+ main
+
+        return optimal_weights, best_metric
 
     def save_state(self, filepath: str):
         """

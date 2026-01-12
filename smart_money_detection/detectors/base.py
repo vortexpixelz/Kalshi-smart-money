@@ -63,19 +63,6 @@ class BaseDetector(ABC):
         pass
 
     @abstractmethod
-    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Predict anomaly labels (0 = normal, 1 = anomaly)
-
-        Args:
-            X: Data to predict
-
-        Returns:
-            Binary predictions array
-        """
-        pass
-
-    @abstractmethod
     def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """
         Compute anomaly scores (higher = more anomalous)
@@ -87,6 +74,29 @@ class BaseDetector(ABC):
             Anomaly scores array
         """
         pass
+
+    @abstractmethod
+    def _scores_to_predictions(
+        self,
+        scores: np.ndarray,
+        X: Union[np.ndarray, pd.DataFrame, None] = None,
+    ) -> np.ndarray:
+        """Convert anomaly scores into binary predictions."""
+
+    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """Predict anomaly labels (0 = normal, 1 = anomaly)."""
+        predictions, _ = self.predict_with_scores(X)
+        return predictions
+
+    def predict_with_scores(
+        self, X: Union[np.ndarray, pd.DataFrame]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Return both predictions and anomaly scores in a single call."""
+
+        X_validated = self._validate_input(X)
+        scores = self.score(X_validated)
+        predictions = self._scores_to_predictions(scores, X_validated)
+        return predictions, scores
 
     def fit_predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """
