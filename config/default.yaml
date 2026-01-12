@@ -1,0 +1,4 @@
+# Default configuration overrides for smart money detection.
+# Values in this file merge with environment variables and CLI overrides.
+# Modify as needed for deployment environments.
+log_level: INFO

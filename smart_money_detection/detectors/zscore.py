@@ -63,18 +63,17 @@ class ZScoreDetector(BaseDetector):
             return np.max(z_scores, axis=1)
         return z_scores.reshape(-1)
 
+    def _scores_to_predictions(
+        self,
+        scores: np.ndarray,
+        X: Union[np.ndarray, pd.DataFrame, None] = None,
+    ) -> np.ndarray:
+        predictions = (np.asarray(scores) > self.threshold).astype(int)
+        return predictions
+
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Predict anomaly labels (0 = normal, 1 = anomaly)
-
-        Args:
-            X: Data to predict of shape (n_samples, n_features)
-
-        Returns:
-            Binary predictions of shape (n_samples,)
-        """
-        scores = self.score(X)
-        return (scores > self.threshold).astype(int)
+        predictions, _ = self.predict_with_scores(X)
+        return predictions
 
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """

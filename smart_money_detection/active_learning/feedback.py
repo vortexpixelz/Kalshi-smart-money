@@ -105,20 +105,48 @@ class FeedbackManager:
         n_samples = len(sample_ids)
 
         if y_pred is None:
-            y_pred = [None] * n_samples
-        if scores is None:
-            scores = [None] * n_samples
-        if metadata is None:
-            metadata = [None] * n_samples
+            y_pred_list = [None] * n_samples
+        else:
+            y_pred_list = list(y_pred)
 
-        for i in range(n_samples):
-            self.add_feedback(
-                sample_ids[i],
-                y_true[i],
-                y_pred[i] if y_pred[i] is not None else None,
-                scores[i] if scores[i] is not None else None,
-                metadata[i],
+        if scores is None:
+            scores_list = [None] * n_samples
+        else:
+            scores_list = list(scores)
+
+        if metadata is None:
+            metadata_list = [None] * n_samples
+        else:
+            metadata_list = list(metadata)
+
+        batch_feedback = []
+        for sample_id, label, pred, score, meta in zip(
+            sample_ids, y_true, y_pred_list, scores_list, metadata_list
+        ):
+            batch_feedback.append(
+                {
+                    'sample_id': sample_id,
+                    'y_true': int(label),
+                    'y_pred': pred if pred is not None else None,
+                    'score': score if score is not None else None,
+                    'timestamp': datetime.now().isoformat(),
+                    'metadata': meta or {},
+                }
             )
+
+        self.feedback_data.extend(batch_feedback)
+        self.labeled_indices.update(sample_ids)
+
+        y_true_array = np.asarray(y_true)
+        positives = int(np.sum(y_true_array))
+        negatives = n_samples - positives
+
+        self.n_positive += positives
+        self.n_negative += negatives
+        self.n_total += n_samples
+
+        if self.optimize_f1 and self.n_total >= 10:
+            self._update_optimal_threshold()
 
     def get_labeled_data(self) -> Tuple[List[Any], np.ndarray, np.ndarray]:
         """
@@ -133,7 +161,8 @@ class FeedbackManager:
         sample_ids = [f['sample_id'] for f in self.feedback_data]
         labels = np.array([f['y_true'] for f in self.feedback_data])
         scores = np.array(
-            [f['score'] if f['score'] is not None else 0.5 for f in self.feedback_data]
+            [f['score'] if f['score'] is not None else np.nan for f in self.feedback_data],
+            dtype=float,
         )
 
         return sample_ids, labels, scores
@@ -207,28 +236,41 @@ class FeedbackManager:
         """
         _, labels, scores = self.get_labeled_data()
 
-        if len(labels) < 5:  # Need minimum samples
+        valid_mask = ~np.isnan(scores)
+        if valid_mask.sum() < 5:  # Need minimum samples with scores
             return
 
+        codex/refactor-_update_optimal_threshold-with-vectorization
+        labels = labels[valid_mask]
+        scores = scores[valid_mask]
+
         best_f1 = 0
+        main
         best_threshold = 0.5
 
-        # Grid search
-        for threshold in np.arange(0.3, 0.71, 0.01):
-            predictions = (scores >= threshold).astype(int)
+        thresholds = np.arange(0.3, 0.71, 0.01)
 
-            tp = ((predictions == 1) & (labels == 1)).sum()
-            fp = ((predictions == 1) & (labels == 0)).sum()
-            fn = ((predictions == 0) & (labels == 1)).sum()
+        labels_bool = labels.astype(bool)
+        scores = scores.astype(float)
 
-            if (tp + fp) > 0 and (tp + fn) > 0:
-                precision = tp / (tp + fp)
-                recall = tp / (tp + fn)
-                f1 = 2 * precision * recall / (precision + recall)
+        # Evaluate all thresholds simultaneously using broadcasting
+        predictions = scores[:, None] >= thresholds[None, :]
 
-                if f1 > best_f1:
-                    best_f1 = f1
-                    best_threshold = threshold
+        tp = np.sum(predictions & labels_bool[:, None], axis=0)
+        fp = np.sum(predictions & (~labels_bool)[:, None], axis=0)
+        fn = np.sum((~predictions) & labels_bool[:, None], axis=0)
+
+        denominator = 2 * tp + fp + fn
+        f1_scores = np.divide(
+            2 * tp,
+            denominator,
+            out=np.zeros_like(denominator, dtype=float),
+            where=denominator > 0,
+        )
+
+        if np.any(f1_scores > 0):
+            best_idx = np.argmax(f1_scores)
+            best_threshold = float(thresholds[best_idx])
 
         self.optimal_threshold = best_threshold
 

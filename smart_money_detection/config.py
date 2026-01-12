@@ -1,8 +1,18 @@
-"""
-Configuration for smart money detection system
-"""
-from dataclasses import dataclass, field
-from typing import List, Dict, Any
+"""Configuration management for the smart money detection system."""
+from __future__ import annotations
+
+import os
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from pathlib import Path
+from typing import Any, Dict, Mapping, MutableMapping, Optional, Sequence, Union
+
+import yaml
+from dotenv import load_dotenv
+
+
+ENV_PREFIX = "SMART_MONEY_DETECTION"
+DEFAULT_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 
 @dataclass
@@ -112,15 +122,230 @@ class Config:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary"""
-        return {
-            'detector': self.detector.__dict__,
-            'ensemble': self.ensemble.__dict__,
-            'smart_money': self.smart_money.__dict__,
-            'active_learning': self.active_learning.__dict__,
-            'random_seed': self.random_seed,
-            'log_level': self.log_level,
-        }
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Config":
+        """Create a config instance from a mapping."""
+        instance = cls()
+        _apply_updates(instance, data)
+        return instance
+
+
+def load_config(
+    *,
+    env_file: Optional[os.PathLike[str] | str] = DEFAULT_ENV_FILE,
+    config_paths: Optional[Sequence[os.PathLike[str] | str]] = None,
+    cli_overrides: Optional[Mapping[str, Any]] = None,
+    env_prefix: str = ENV_PREFIX,
+) -> Config:
+    """Load configuration by merging .env, YAML, and CLI overrides.
+
+    Args:
+        env_file: Optional path to a .env file. If provided and exists, it
+            will be loaded before reading environment variables.
+        config_paths: Optional sequence of paths (files or directories) that
+            contain YAML configuration. Directories are traversed and all
+            ``*.yml``/``*.yaml`` files are merged in lexical order.
+        cli_overrides: Optional mapping of overrides (e.g., parsed CLI args).
+            Dotted-key notation (``section.option``) is supported.
+        env_prefix: Prefix used to extract environment overrides. Variables
+            must follow the ``PREFIX__SECTION__OPTION`` convention.
+
+    Returns:
+        A fully merged :class:`Config` instance.
+    """
+
+    if env_file:
+        env_path = Path(env_file)
+        if env_path.exists():
+            load_dotenv(env_path, override=True)
+
+    merged_overrides: Dict[str, Any] = {}
+
+    # YAML configuration
+    yaml_overrides = _load_yaml_overrides(config_paths)
+    _deep_update(merged_overrides, yaml_overrides)
+
+    # Environment configuration
+    env_overrides = _extract_env_overrides(env_prefix)
+    _deep_update(merged_overrides, env_overrides)
+
+    # CLI overrides
+    if cli_overrides:
+        normalized_cli = _normalize_overrides(cli_overrides)
+        _deep_update(merged_overrides, normalized_cli)
+
+    config = Config()
+    _apply_updates(config, merged_overrides)
+    return config
+
+
+def _load_yaml_overrides(
+    config_paths: Optional[Sequence[os.PathLike[str] | str]]
+) -> Dict[str, Any]:
+    paths: Sequence[os.PathLike[str] | str]
+    if config_paths:
+        paths = config_paths
+    else:
+        paths = [DEFAULT_CONFIG_DIR]
+
+    overrides: Dict[str, Any] = {}
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        if path.is_dir():
+            yaml_files = sorted(
+                list(path.glob("*.yml")) + list(path.glob("*.yaml"))
+            )
+            for yaml_file in yaml_files:
+                overrides = _merge_yaml_file(overrides, yaml_file)
+        else:
+            overrides = _merge_yaml_file(overrides, path)
+    return overrides
+
+
+def _merge_yaml_file(base: Dict[str, Any], file_path: Path) -> Dict[str, Any]:
+    try:
+        with file_path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except yaml.YAMLError as exc:  # pragma: no cover - configuration error
+        raise ValueError(f"Failed to parse YAML config: {file_path}") from exc
+
+    if not isinstance(data, MutableMapping):
+        raise ValueError(f"YAML config must be a mapping: {file_path}")
+
+    result: Dict[str, Any] = dict(base)
+    _deep_update(result, data)  # type: ignore[arg-type]
+    return result
+
+
+def _extract_env_overrides(prefix: str) -> Dict[str, Any]:
+    overrides: Dict[str, Any] = {}
+    prefix_with_sep = f"{prefix}__"
+    for key, value in os.environ.items():
+        if not key.startswith(prefix_with_sep):
+            continue
+        nested_key = key[len(prefix_with_sep) :].lower()
+        segments = nested_key.split("__")
+        _set_nested_value(overrides, segments, value)
+    return overrides
+
+
+def _normalize_overrides(overrides: Mapping[str, Any]) -> Dict[str, Any]:
+    normalized: Dict[str, Any] = {}
+    for key, value in overrides.items():
+        if isinstance(value, Mapping):
+            normalized[key] = _normalize_overrides(value)
+            continue
+        segments = key.split(".") if "." in key else [key]
+        _set_nested_value(normalized, segments, value)
+    return normalized
+
+
+def _set_nested_value(container: Dict[str, Any], keys: Sequence[str], value: Any):
+    current = container
+    for segment in keys[:-1]:
+        current = current.setdefault(segment, {})  # type: ignore[assignment]
+    current[keys[-1]] = value
+
+
+def _deep_update(target: Dict[str, Any], overrides: Mapping[str, Any]):
+    for key, value in overrides.items():
+        if (
+            key in target
+            and isinstance(target[key], MutableMapping)
+            and isinstance(value, Mapping)
+        ):
+            _deep_update(target[key], value)
+        else:
+            target[key] = value
+
+
+def _apply_updates(obj: Any, updates: Mapping[str, Any]):
+    if not is_dataclass(obj):
+        raise TypeError("Updates can only be applied to dataclass instances")
+
+    field_map = {field.name: field for field in fields(obj)}
+    for key, value in updates.items():
+        if key not in field_map:
+            continue
+        field_info = field_map[key]
+        current_value = getattr(obj, key)
+        if is_dataclass(current_value) and isinstance(value, Mapping):
+            _apply_updates(current_value, value)
+        else:
+            coerced = _coerce_value(value, field_info.type)
+            setattr(obj, key, coerced)
+
+
+def _coerce_value(value: Any, target_type: Any) -> Any:
+    from typing import get_args, get_origin
+
+    origin = get_origin(target_type)
+    if origin is None:
+        coerced = _coerce_simple(value, target_type)
+        return coerced
+
+    if origin is list:
+        elem_type = get_args(target_type)[0] if get_args(target_type) else Any
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return [_coerce_value(v, elem_type) for v in value]
+        return value
+
+    if origin is dict:
+        key_type, val_type = get_args(target_type) or (Any, Any)
+        if isinstance(value, Mapping):
+            return {
+                _coerce_value(k, key_type): _coerce_value(v, val_type)
+                for k, v in value.items()
+            }
+        return value
+
+    if origin is Union:
+        for arg in get_args(target_type):
+            if arg is type(None):
+                if value in (None, "None", "null"):
+                    return None
+                continue
+            try:
+                return _coerce_value(value, arg)
+            except (TypeError, ValueError):
+                continue
+        return value
+
+    return value
+
+
+def _coerce_simple(value: Any, target_type: Any) -> Any:
+    if target_type in (Any, object):
+        return value
+    if target_type is bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+    if target_type is int:
+        return int(value)
+    if target_type is float:
+        return float(value)
+    if target_type is str:
+        return str(value)
+    return value
 
 
 # Default configuration instance
-default_config = Config()
+default_config = load_config()
+
+
+__all__ = [
+    "ActiveLearningConfig",
+    "Config",
+    "DetectorConfig",
+    "EnsembleConfig",
+    "SmartMoneyConfig",
+    "load_config",
+    "default_config",
+]

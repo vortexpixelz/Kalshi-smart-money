@@ -20,7 +20,7 @@ import pytest
 
 from smart_money_detection import SmartMoneyDetector
 from smart_money_detection.kalshi_client import KalshiClient
-from smart_money_detection.config import Config
+from smart_money_detection.config import load_config
 from smart_money_detection.models import VPINClassifier
 
 # Setup logging
@@ -153,7 +153,32 @@ def test_smart_money_detection(client: KalshiClient, market: dict, markets: list
     print(f"   Max trade size: ${trades['volume'].max():.2f}")
 
     print_section("🤖 Initializing Smart Money Detector")
-    print(f"   Ensemble method: {detector.config.ensemble.weighting_method}")
+
+    config = load_config()
+
+    # Configure based on market size
+    market_volume = market.get('volume', 0)
+    if market_volume > 1000000:
+        print("   Detected: MAJOR MARKET (using high thresholds)")
+        config.smart_money.major_market_dollar_threshold = 10000
+    else:
+        print("   Detected: NICHE MARKET (using lower thresholds)")
+        config.smart_money.niche_market_dollar_threshold = 1000
+
+    config.ensemble.weighting_method = 'thompson'
+    print(f"   Ensemble method: {config.ensemble.weighting_method}")
+
+    detector = SmartMoneyDetector(config)
+
+    # Fit detector
+    print("\n   Fitting detector on trade history...")
+    detector.fit(
+        trades,
+        volume_col='volume',
+        timestamp_col='timestamp',
+        price_col='price'
+    )
+    print("   ✅ Detector fitted")
 
     # Make predictions
     print_section("🔍 Detecting Smart Money Trades")

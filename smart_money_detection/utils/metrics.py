@@ -1,7 +1,6 @@
-"""Typed metric helpers used across the smart money detection pipeline."""
-
-from __future__ import annotations
-
+"""
+Evaluation metrics for anomaly detection and smart money identification
+"""
 from typing import Dict, Optional, Tuple
 
 import numpy as np

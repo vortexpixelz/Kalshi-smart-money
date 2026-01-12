@@ -1,4 +1,30 @@
-"""Shared utilities and base abstractions for anomaly detectors."""
+"""Interfaces and base classes for anomaly detectors."""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Optional, Protocol, Union, runtime_checkable
+
+import numpy as np
+import pandas as pd
+
+
+@runtime_checkable
+class DetectorProtocol(Protocol):
+    """Structural protocol for detector implementations."""
+
+    name: str
+    is_fitted_: bool
+
+    def fit(
+        self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None
+    ) -> "DetectorProtocol":
+        ...
+
+    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        ...
+
+    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        ...
 
 from __future__ import annotations
 
@@ -12,91 +38,62 @@ import pandas as pd
 
 InputData = Union[np.ndarray, pd.DataFrame]
 
+    @abstractmethod
+    def fit(
+        self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None
+    ) -> "BaseDetector":
+        """
+        Fit the detector on training data
 
 class DetectorError(RuntimeError):
     """Raised when a detector cannot complete its requested operation."""
 
 
-class SupportsPredict(Protocol):
-    """Protocol used for type-checking detector predictions."""
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        """Return anomaly labels for *X*."""
-
-
-@dataclass
-class DetectorState:
-    """Lightweight container for detector metadata."""
+    @abstractmethod
+    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """
+        Compute anomaly scores (higher = more anomalous)
 
     name: str
     n_samples_seen: int = 0
     is_fitted: bool = False
 
 
-class BaseDetector(ABC):
-    """Abstract base class that enforces consistent detector behaviour."""
+    @abstractmethod
+    def _scores_to_predictions(
+        self,
+        scores: np.ndarray,
+        X: Union[np.ndarray, pd.DataFrame, None] = None,
+    ) -> np.ndarray:
+        """Convert anomaly scores into binary predictions."""
 
-    def __init__(self, name: Optional[str] = None, *, logger: Optional[logging.Logger] = None) -> None:
-        self.state = DetectorState(name=name or self.__class__.__name__)
-        self.logger = logger or logging.getLogger(f"{__name__}.{self.state.name}")
-        # Backwards-compatible attributes referenced in older code paths.
-        self.is_fitted_: bool = False
-        self.n_samples_seen_: int = 0
+    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """Predict anomaly labels (0 = normal, 1 = anomaly)."""
+        predictions, _ = self.predict_with_scores(X)
+        return predictions
 
-    @property
-    def name(self) -> str:
-        """Human-readable detector name."""
+    def predict_with_scores(
+        self, X: Union[np.ndarray, pd.DataFrame]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Return both predictions and anomaly scores in a single call."""
 
-        return self.state.name
+        X_validated = self._validate_input(X)
+        scores = self.score(X_validated)
+        predictions = self._scores_to_predictions(scores, X_validated)
+        return predictions, scores
 
-    # ------------------------------------------------------------------
-    # Template methods
-    # ------------------------------------------------------------------
-    def fit(self, X: InputData, y: Optional[np.ndarray] = None) -> "BaseDetector":
-        """Fit the detector on *X* with optional labels *y*."""
+    def fit_predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """
+        Fit the detector and predict on the same data
 
-        array = self._to_2d_array(X)
-        try:
-            self._fit(array, y)
-        except Exception as exc:  # pragma: no cover - defensive programming
-            self.logger.exception("%s failed during fit", self.state.name)
-            raise DetectorError(f"{self.state.name} failed to fit") from exc
+        Args:
+            X: Training data
 
-        self.state.is_fitted = True
-        self.state.n_samples_seen = array.shape[0]
-        self.is_fitted_ = True
-        self.n_samples_seen_ = array.shape[0]
-        return self
-
-    def score(self, X: InputData) -> np.ndarray:
-        """Return anomaly scores for *X*."""
-
-        self._check_is_fitted()
-        array = self._to_2d_array(X)
-        try:
-            scores = self._score(array)
-        except Exception as exc:  # pragma: no cover - defensive programming
-            self.logger.exception("%s failed during score", self.state.name)
-            raise DetectorError(f"{self.state.name} failed to score") from exc
-
-        return np.asarray(scores, dtype=float)
-
-    def predict(self, X: InputData) -> np.ndarray:
-        """Return binary anomaly decisions for *X*."""
-
-        scores = self.score(X)
-        return (scores > 0.0).astype(int)
-
-    # ------------------------------------------------------------------
-    # Convenience helpers
-    # ------------------------------------------------------------------
-    def fit_predict(self, X: InputData) -> np.ndarray:
-        """Fit the detector on *X* and return predictions for the same data."""
-
-        return self.fit(X).predict(X)
-
-    def decision_function(self, X: InputData) -> np.ndarray:
-        """Alias for :meth:`score` for scikit-learn style compatibility."""
+        Returns:
+            Binary predictions array
+        """
+        self.fit(X)
+        return self.predict(X)
 
         return self.score(X)
 
