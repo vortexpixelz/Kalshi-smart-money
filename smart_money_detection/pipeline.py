@@ -396,6 +396,13 @@ class SmartMoneyDetector:
             update_weights: If True, update ensemble weights based on feedback
         """
         # Add to feedback manager
+ codex/add-automated-tests-for-kalshi-client-ts4k5p
+        if labels is None or len(labels) == 0:
+            self.logger.info("No feedback labels provided; skipping feedback update.")
+            return
+
+        self.feedback_manager.add_batch_feedback(sample_ids, labels)
+
         weights = self.ensemble.get_weights()
         ensemble_scores: List[Optional[float]] = []
         predictions: List[Optional[int]] = []
@@ -416,6 +423,7 @@ class SmartMoneyDetector:
             y_pred=predictions,
             scores=ensemble_scores,
         )
+ main
 
         self.logger.info(f"Added feedback for {len(labels)} samples")
 
