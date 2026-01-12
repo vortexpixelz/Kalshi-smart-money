@@ -1,10 +1,30 @@
-"""
-Base class for anomaly detectors
-"""
+"""Interfaces and base classes for anomaly detectors."""
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from typing import Optional, Protocol, Union, runtime_checkable
+
 import numpy as np
 import pandas as pd
-from typing import Union, Optional, Tuple
+
+
+@runtime_checkable
+class DetectorProtocol(Protocol):
+    """Structural protocol for detector implementations."""
+
+    name: str
+    is_fitted_: bool
+
+    def fit(
+        self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None
+    ) -> "DetectorProtocol":
+        ...
+
+    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        ...
+
+    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        ...
 
 
 class BaseDetector(ABC):
@@ -27,7 +47,9 @@ class BaseDetector(ABC):
         self.n_samples_seen_ = 0
 
     @abstractmethod
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
+    def fit(
+        self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None
+    ) -> "BaseDetector":
         """
         Fit the detector on training data
 
@@ -37,19 +59,6 @@ class BaseDetector(ABC):
 
         Returns:
             self
-        """
-        pass
-
-    @abstractmethod
-    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Predict anomaly labels (0 = normal, 1 = anomaly)
-
-        Args:
-            X: Data to predict
-
-        Returns:
-            Binary predictions array
         """
         pass
 
@@ -65,6 +74,29 @@ class BaseDetector(ABC):
             Anomaly scores array
         """
         pass
+
+    @abstractmethod
+    def _scores_to_predictions(
+        self,
+        scores: np.ndarray,
+        X: Union[np.ndarray, pd.DataFrame, None] = None,
+    ) -> np.ndarray:
+        """Convert anomaly scores into binary predictions."""
+
+    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """Predict anomaly labels (0 = normal, 1 = anomaly)."""
+        predictions, _ = self.predict_with_scores(X)
+        return predictions
+
+    def predict_with_scores(
+        self, X: Union[np.ndarray, pd.DataFrame]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Return both predictions and anomaly scores in a single call."""
+
+        X_validated = self._validate_input(X)
+        scores = self.score(X_validated)
+        predictions = self._scores_to_predictions(scores, X_validated)
+        return predictions, scores
 
     def fit_predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """
