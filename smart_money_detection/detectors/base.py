@@ -26,25 +26,17 @@ class DetectorProtocol(Protocol):
     def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         ...
 
+from __future__ import annotations
 
-class BaseDetector(ABC):
-    """
-    Abstract base class for anomaly detectors
+import logging
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Optional, Protocol, Union
 
-    All detectors should inherit from this class and implement the fit, predict,
-    and score methods.
-    """
+import numpy as np
+import pandas as pd
 
-    def __init__(self, name: str = None):
-        """
-        Initialize base detector
-
-        Args:
-            name: Name of the detector
-        """
-        self.name = name or self.__class__.__name__
-        self.is_fitted_ = False
-        self.n_samples_seen_ = 0
+InputData = Union[np.ndarray, pd.DataFrame]
 
     @abstractmethod
     def fit(
@@ -53,27 +45,19 @@ class BaseDetector(ABC):
         """
         Fit the detector on training data
 
-        Args:
-            X: Training data
-            y: Optional labels (for semi-supervised methods)
+class DetectorError(RuntimeError):
+    """Raised when a detector cannot complete its requested operation."""
 
-        Returns:
-            self
-        """
-        pass
 
     @abstractmethod
     def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """
         Compute anomaly scores (higher = more anomalous)
 
-        Args:
-            X: Data to score
+    name: str
+    n_samples_seen: int = 0
+    is_fitted: bool = False
 
-        Returns:
-            Anomaly scores array
-        """
-        pass
 
     @abstractmethod
     def _scores_to_predictions(
@@ -111,42 +95,44 @@ class BaseDetector(ABC):
         self.fit(X)
         return self.predict(X)
 
-    def decision_function(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Alias for score method (scikit-learn compatibility)
-
-        Args:
-            X: Data to score
-
-        Returns:
-            Anomaly scores array
-        """
         return self.score(X)
 
-    def check_is_fitted(self):
-        """Check if the detector has been fitted"""
-        if not self.is_fitted_:
-            raise RuntimeError(
-                f"{self.name} has not been fitted yet. Call fit() before predict() or score()."
+    # ------------------------------------------------------------------
+    # Internal API for subclasses
+    # ------------------------------------------------------------------
+    @abstractmethod
+    def _fit(self, X: np.ndarray, y: Optional[np.ndarray]) -> None:
+        """Subclass-specific fitting logic."""
+
+    @abstractmethod
+    def _score(self, X: np.ndarray) -> np.ndarray:
+        """Subclass-specific scoring logic."""
+
+    def _check_is_fitted(self) -> None:
+        if not self.state.is_fitted:
+            raise DetectorError(
+                f"{self.state.name} has not been fitted yet. Call fit() before predict() or score()."
             )
 
-    def _validate_input(
-        self, X: Union[np.ndarray, pd.DataFrame]
-    ) -> Union[np.ndarray, pd.DataFrame]:
-        """
-        Validate input data
+    # Backwards-compatible public alias
+    def check_is_fitted(self) -> None:  # pragma: no cover - deprecated surface
+        self._check_is_fitted()
 
-        Args:
-            X: Input data
+    @staticmethod
+    def _to_2d_array(X: InputData) -> np.ndarray:
+        """Convert supported input types into a 2-D NumPy array."""
 
-        Returns:
-            Validated input data
-        """
         if isinstance(X, pd.DataFrame):
-            return X
+            array = X.to_numpy(copy=False)
         elif isinstance(X, np.ndarray):
-            if X.ndim == 1:
-                X = X.reshape(-1, 1)
-            return X
+            array = X
         else:
-            raise TypeError(f"Expected np.ndarray or pd.DataFrame, got {type(X)}")
+            raise TypeError(f"Expected np.ndarray or pd.DataFrame, received {type(X)!r}")
+
+        if array.ndim == 1:
+            array = np.reshape(array, (-1, 1))
+
+        if not np.all(np.isfinite(array)):
+            raise DetectorError("Input contains non-finite values")
+
+        return array.astype(float, copy=False)

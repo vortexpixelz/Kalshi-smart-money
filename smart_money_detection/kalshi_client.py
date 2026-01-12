@@ -399,15 +399,18 @@ class AsyncKalshiClient(_KalshiBase):
         }
 
         if not trades.empty:
-            summary.update({
-                'n_trades': len(trades),
-                'avg_trade_size': trades['volume'].mean(),
-                'median_trade_size': trades['volume'].median(),
-                'max_trade_size': trades['volume'].max(),
-                'total_volume_24h': trades[
-                    trades['timestamp'] > (datetime.now() - timedelta(days=1))
-                ]['volume'].sum(),
-            })
+            last_day = datetime.now() - timedelta(days=1)
+            summary.update(
+                {
+                    'n_trades': int(trades.shape[0]),
+                    'avg_trade_size': float(trades['volume'].mean()),
+                    'median_trade_size': float(trades['volume'].median()),
+                    'max_trade_size': float(trades['volume'].max()),
+                    'total_volume_24h': float(
+                        trades.loc[trades['timestamp'] > last_day, 'volume'].sum()
+                    ),
+                }
+            )
 
         return summary
 

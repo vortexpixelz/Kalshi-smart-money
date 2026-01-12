@@ -9,7 +9,7 @@ from .weighting import (
     ThompsonSamplingWeighting,
     UCBWeighting,
 )
-from .ensemble import AnomalyEnsemble
+from .ensemble import AnomalyEnsemble, ProbabilityCalibrator
 
 __all__ = [
     "BaseEnsemble",
@@ -19,4 +19,5 @@ __all__ = [
     "ThompsonSamplingWeighting",
     "UCBWeighting",
     "AnomalyEnsemble",
+    "ProbabilityCalibrator",
 ]
