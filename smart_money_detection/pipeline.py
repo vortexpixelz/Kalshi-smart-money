@@ -173,6 +173,18 @@ class SmartMoneyDetector:
         Returns:
             self
         """
+        if trades is None or trades.empty:
+            self.logger.warning("Received empty trade dataset for fit; skipping training.")
+            self.is_fitted = False
+            self.n_samples_seen = 0
+            return self
+
+        if volume_col not in trades.columns:
+            raise ValueError(f"Column '{volume_col}' not found in trade data")
+
+        if timestamp_col not in trades.columns:
+            raise ValueError(f"Column '{timestamp_col}' not found in trade data")
+
         self.logger.info(f"Fitting smart money detector on {len(trades)} trades")
 
         # Extract volumes
@@ -216,6 +228,10 @@ class SmartMoneyDetector:
         """
         if not self.is_fitted:
             raise RuntimeError("Detector not fitted. Call fit() first.")
+
+        if trades is None or trades.empty:
+            self.logger.info("No trades provided for prediction; returning empty result.")
+            return np.array([], dtype=int)
 
         scores = self.score(trades, volume_col, timestamp_col, use_temporal_context)
 
