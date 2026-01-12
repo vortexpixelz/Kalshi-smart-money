@@ -110,12 +110,12 @@ This implementation is based on cutting-edge research from 2020-2025:
 
 ### Key Insights
 
-✅ **Start with uniform weights** when you have <10 labeled examples
-✅ **Use Thompson Sampling** for optimal exploration-exploitation
-✅ **Apply active learning** (QBC) to reduce manual reviews by 50-80%
-✅ **Encode time cyclically** to preserve periodicity
-✅ **Optimize F1 threshold** as feedback accumulates
-✅ **Transition to Bayesian optimization** after 10-50 labels
+- **Start with uniform weights** when you have <10 labeled examples
+- **Use Thompson Sampling** for optimal exploration-exploitation
+- **Apply active learning** (QBC) to reduce manual reviews by 50-80%
+- **Encode time cyclically** to preserve periodicity
+- **Optimize F1 threshold** as feedback accumulates
+- **Transition to Bayesian optimization** after 10-50 labels
 
 ## Configuration
 
