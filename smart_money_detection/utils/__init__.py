@@ -3,8 +3,12 @@ Utility functions for smart money detection
 """
 
 from .metrics import compute_metrics, compute_f1_score, compute_precision_recall, find_optimal_threshold
-from .validation import cross_validate, loocv
-from .optimization import bayesian_optimize_weights, gradient_optimize_weights
+from .validation import cross_validate, loocv, nested_cv, bootstrap_validation
+from .optimization import (
+    bayesian_optimize_weights,
+    gradient_optimize_weights,
+    grid_search_weights,
+)
 
 __all__ = [
     "compute_metrics",
@@ -13,6 +17,9 @@ __all__ = [
     "find_optimal_threshold",
     "cross_validate",
     "loocv",
+    "nested_cv",
+    "bootstrap_validation",
     "bayesian_optimize_weights",
     "gradient_optimize_weights",
+    "grid_search_weights",
 ]

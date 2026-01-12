@@ -1,9 +1,12 @@
-"""
-Z-score based anomaly detector
-"""
+"""Z-score based anomaly detector."""
+
+from __future__ import annotations
+
+from typing import Optional, Union
+
 import numpy as np
 import pandas as pd
-from typing import Union, Optional
+
 from .base import BaseDetector
 
 
@@ -36,75 +39,29 @@ class ZScoreDetector(BaseDetector):
         self.median_ = None
         self.mad_ = None
 
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
-        """
-        Fit the detector by computing mean and standard deviation
-
-        Args:
-            X: Training data of shape (n_samples, n_features)
-            y: Ignored (unsupervised method)
-
-        Returns:
-            self
-        """
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values
-        else:
-            X_values = X
+    def _fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> None:
+        """Compute reference statistics for the detector."""
 
         if self.use_median:
-            # Robust statistics using median and MAD
-            self.median_ = np.median(X_values, axis=0)
-            # MAD = median absolute deviation
-            self.mad_ = np.median(np.abs(X_values - self.median_), axis=0)
-            # Prevent division by zero
-            self.mad_[self.mad_ == 0] = 1.0
+            self.median_ = np.median(X, axis=0)
+            self.mad_ = np.median(np.abs(X - self.median_), axis=0)
+            self.mad_ = np.where(self.mad_ == 0, 1.0, self.mad_)
         else:
-            # Standard statistics
-            self.mean_ = np.mean(X_values, axis=0)
-            self.std_ = np.std(X_values, axis=0)
-            # Prevent division by zero
-            self.std_[self.std_ == 0] = 1.0
+            self.mean_ = np.mean(X, axis=0)
+            self.std_ = np.std(X, axis=0)
+            self.std_ = np.where(self.std_ == 0, 1.0, self.std_)
 
-        self.is_fitted_ = True
-        self.n_samples_seen_ = X_values.shape[0]
-
-        return self
-
-    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Compute anomaly scores using absolute Z-score
-
-        Args:
-            X: Data to score of shape (n_samples, n_features)
-
-        Returns:
-            Anomaly scores of shape (n_samples,)
-        """
-        self.check_is_fitted()
-        X = self._validate_input(X)
-
-        if isinstance(X, pd.DataFrame):
-            X_values = X.values
-        else:
-            X_values = X
+    def _score(self, X: np.ndarray) -> np.ndarray:
+        """Return absolute Z-scores for each row in *X*."""
 
         if self.use_median:
-            # Robust Z-score
-            z_scores = np.abs(X_values - self.median_) / (1.4826 * self.mad_)
+            z_scores = np.abs(X - self.median_) / (1.4826 * self.mad_)
         else:
-            # Standard Z-score
-            z_scores = np.abs(X_values - self.mean_) / self.std_
+            z_scores = np.abs(X - self.mean_) / self.std_
 
-        # Take maximum Z-score across features
         if z_scores.ndim > 1:
-            scores = np.max(z_scores, axis=1)
-        else:
-            scores = z_scores
-
-        return scores
+            return np.max(z_scores, axis=1)
+        return z_scores.reshape(-1)
 
     def _scores_to_predictions(
         self,

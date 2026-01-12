@@ -1,9 +1,42 @@
-"""
-Base class for ensemble methods
-"""
+"""Base classes and protocols for ensemble strategies."""
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from typing import Dict, Optional, Protocol, Sequence, runtime_checkable
+
 import numpy as np
-from typing import List, Optional, Dict, Any
+
+from ..detectors.base import DetectorProtocol
+
+
+@runtime_checkable
+class EnsembleProtocol(Protocol):
+    """Structural protocol describing an ensemble strategy."""
+
+    detectors: Sequence[DetectorProtocol]
+
+    def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> "EnsembleProtocol":
+        ...
+
+    def score(self, X: np.ndarray, context: Optional[np.ndarray] = None) -> np.ndarray:
+        ...
+
+    def predict(self, X: np.ndarray, context: Optional[np.ndarray] = None) -> np.ndarray:
+        ...
+
+    def update(
+        self,
+        X: np.ndarray,
+        y_true: np.ndarray,
+        context: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        ...
+
+    def get_weights(self) -> np.ndarray:
+        ...
+
+    def get_detector_contributions(self, X: np.ndarray) -> Dict[str, np.ndarray]:
+        ...
 
 
 class BaseEnsemble(ABC):

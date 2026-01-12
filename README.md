@@ -110,16 +110,16 @@ This implementation is based on cutting-edge research from 2020-2025:
 
 ### Key Insights
 
-✅ **Start with uniform weights** when you have <10 labeled examples
-✅ **Use Thompson Sampling** for optimal exploration-exploitation
-✅ **Apply active learning** (QBC) to reduce manual reviews by 50-80%
-✅ **Encode time cyclically** to preserve periodicity
-✅ **Optimize F1 threshold** as feedback accumulates
-✅ **Transition to Bayesian optimization** after 10-50 labels
+- **Start with uniform weights** when you have <10 labeled examples
+- **Use Thompson Sampling** for optimal exploration-exploitation
+- **Apply active learning** (QBC) to reduce manual reviews by 50-80%
+- **Encode time cyclically** to preserve periodicity
+- **Optimize F1 threshold** as feedback accumulates
+- **Transition to Bayesian optimization** after 10-50 labels
 
 ## Configuration
 
-Customize detection parameters via `Config`:
+Customize detection parameters via the configuration loader:
 
 ### Logging
 
@@ -128,9 +128,9 @@ global logging on initialization. Configure logging in your application before c
 the detector if you need specific handlers or log levels.
 
 ```python
-from smart_money_detection.config import Config
+from smart_money_detection.config import load_config
 
-config = Config()
+config = load_config()
 
 # Ensemble weighting
 config.ensemble.weighting_method = 'thompson'  # 'uniform', 'mwu', 'ucb'
@@ -149,6 +149,9 @@ config.active_learning.optimize_f1 = True
 
 detector = SmartMoneyDetector(config)
 ```
+
+The loader automatically merges values from `config/*.yaml`, environment variables
+(`SMART_MONEY_DETECTION__SECTION__FIELD`), and optional CLI overrides.
 
 ## Examples
 
