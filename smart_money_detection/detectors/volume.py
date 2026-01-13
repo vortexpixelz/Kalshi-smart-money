@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseDetector
+from smart_money_detection.utils.performance import track_performance
 
 
 class RelativeVolumeDetector(BaseDetector):
@@ -71,10 +72,12 @@ class RelativeVolumeDetector(BaseDetector):
 
         return predictions.astype(int)
 
+    @track_performance("detector.volume.predict", metadata={"detector": "volume"})
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         predictions, _ = self.predict_with_scores(X)
         return predictions
 
+    @track_performance("detector.volume.score_rolling", metadata={"detector": "volume"})
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
         Compute rolling relative volume scores for online detection
@@ -106,6 +109,7 @@ class RelativeVolumeDetector(BaseDetector):
 
         return scores.values
 
+    @track_performance("detector.volume.predict_rolling", metadata={"detector": "volume"})
     def predict_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
         Predict anomalies using rolling volume baseline

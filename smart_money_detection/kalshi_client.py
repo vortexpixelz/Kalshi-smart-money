@@ -257,6 +257,7 @@ class KalshiClient(_KalshiBase):
             retries_attempted=retries_attempted,
         )
 
+    @track_performance("kalshi.sync.get_markets", metadata={"client": "sync"})
     def get_markets(
         self,
         status: str = 'active',
@@ -308,6 +309,7 @@ class KalshiClient(_KalshiBase):
             )
             return None
 
+    @track_performance("kalshi.sync.get_trades", metadata={"client": "sync"})
     def get_trades(
         self,
         ticker: str,
@@ -341,6 +343,7 @@ class KalshiClient(_KalshiBase):
 
         return self._format_trades(trades)
 
+    @track_performance("kalshi.sync.get_market_summary", metadata={"client": "sync"})
     def get_market_summary(self, ticker: str) -> Dict[str, Any]:
         """Return market metadata along with recent volume statistics."""
         market = self.get_market(ticker)
@@ -543,6 +546,7 @@ class AsyncKalshiClient(_KalshiBase):
             retries_attempted=retries_attempted,
         )
 
+    @track_performance("kalshi.async.get_markets", metadata={"client": "async"})
     async def get_markets(
         self,
         status: str = 'active',
@@ -594,6 +598,7 @@ class AsyncKalshiClient(_KalshiBase):
             )
             return None
 
+    @track_performance("kalshi.async.get_trades", metadata={"client": "async"})
     async def get_trades(
         self,
         ticker: str,
@@ -627,6 +632,7 @@ class AsyncKalshiClient(_KalshiBase):
 
         return self._format_trades(trades)
 
+    @track_performance("kalshi.async.get_market_summary", metadata={"client": "async"})
     async def get_market_summary(self, ticker: str) -> Dict[str, Any]:
         """Return market metadata along with recent volume statistics."""
         market = await self.get_market(ticker)
@@ -645,7 +651,7 @@ class AsyncKalshiClient(_KalshiBase):
         }
 
         if not trades.empty:
-            last_day = datetime.now() - timedelta(days=1)
+            last_day = datetime.now(timezone.utc) - timedelta(days=1)
             summary.update(
                 {
                     'n_trades': int(trades.shape[0]),

@@ -9,6 +9,13 @@ __version__ = "0.1.0"
 __author__ = "VirtualPixelz"
 
 from .config import Config, load_config
-from .pipeline import SmartMoneyDetector
 
 __all__ = ["SmartMoneyDetector", "Config", "load_config"]
+
+
+def __getattr__(name: str):
+    if name == "SmartMoneyDetector":
+        from .pipeline import SmartMoneyDetector
+
+        return SmartMoneyDetector
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

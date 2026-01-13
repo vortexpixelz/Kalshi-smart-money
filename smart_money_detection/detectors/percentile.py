@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseDetector
+from smart_money_detection.utils.performance import track_performance
 
 
 class PercentileDetector(BaseDetector):
@@ -78,10 +79,12 @@ class PercentileDetector(BaseDetector):
         predictions = (np.asarray(scores) > 0).astype(int)
         return predictions
 
+    @track_performance("detector.percentile.predict", metadata={"detector": "percentile"})
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         predictions, _ = self.predict_with_scores(X)
         return predictions
 
+    @track_performance("detector.percentile.score_rolling", metadata={"detector": "percentile"})
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
         Compute rolling percentile-based scores for online detection
@@ -127,6 +130,7 @@ class PercentileDetector(BaseDetector):
 
         return scores.values
 
+    @track_performance("detector.percentile.predict_rolling", metadata={"detector": "percentile"})
     def predict_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
         Predict anomalies using rolling percentiles

@@ -128,6 +128,14 @@ class BaseDetector(ABC):
     ) -> np.ndarray:
         """Convert anomaly scores into binary predictions."""
 
+    @abstractmethod
+    def _scores_to_predictions(
+        self,
+        scores: np.ndarray,
+        X: Union[np.ndarray, pd.DataFrame, None] = None,
+    ) -> np.ndarray:
+        """Convert anomaly scores into binary predictions."""
+
     def _check_is_fitted(self) -> None:
         if not self.is_fitted:
             raise DetectorError(
@@ -137,6 +145,9 @@ class BaseDetector(ABC):
     def check_is_fitted(self) -> None:  # pragma: no cover - deprecated surface
         """Deprecated alias for `_check_is_fitted`."""
         self._check_is_fitted()
+
+    def _validate_input(self, X: InputData) -> np.ndarray:
+        return self._to_2d_array(X)
 
     @staticmethod
     def _to_2d_array(X: InputData) -> np.ndarray:
