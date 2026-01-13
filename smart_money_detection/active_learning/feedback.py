@@ -243,6 +243,7 @@ class FeedbackManager:
         labels = labels[valid_mask]
         scores = scores[valid_mask]
 
+        best_f1 = 0
         best_threshold = 0.5
 
         thresholds = np.arange(0.3, 0.71, 0.01)

@@ -60,16 +60,13 @@ class RelativeVolumeDetector(BaseDetector):
     def _scores_to_predictions(
         self,
         scores: np.ndarray,
-        X: Union[np.ndarray, pd.DataFrame, None] = None,
+        X: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         scores_arr = np.asarray(scores)
         predictions = scores_arr > self.threshold_multiplier
 
         if self.absolute_threshold is not None and X is not None:
-            if isinstance(X, pd.DataFrame):
-                X_values = X.values.flatten()
-            else:
-                X_values = np.asarray(X).flatten()
+            X_values = np.asarray(X).flatten()
             predictions = np.logical_or(predictions, X_values > self.absolute_threshold)
 
         return predictions.astype(int)
@@ -182,7 +179,7 @@ class MarketCapAwareVolumeDetector(RelativeVolumeDetector):
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[np.ndarray] = None,
         market_size: Optional[float] = None,
-    ):
+    ) -> "MarketCapAwareVolumeDetector":
         """
         Fit the detector with market size awareness
 
@@ -199,8 +196,8 @@ class MarketCapAwareVolumeDetector(RelativeVolumeDetector):
             self.is_major_market_ = market_size > self.major_market_threshold * 10
         else:
             # Estimate from data
-            X_values = X.values.flatten() if isinstance(X, pd.DataFrame) else X.flatten()
-            median_volume = np.median(X_values)
+            array = self._to_2d_array(X)
+            median_volume = float(np.median(array))
             self.is_major_market_ = median_volume > self.major_market_threshold / 10
 
         # Adjust parameters based on market type
