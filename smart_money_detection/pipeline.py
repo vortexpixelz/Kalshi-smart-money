@@ -274,7 +274,9 @@ class SmartMoneyDetector:
             detector_scores.append(normalized)
 
         detector_scores = (
-            np.column_stack(detector_scores) if detector_scores else np.empty((len(volumes), 0))
+            np.column_stack(detector_scores)
+            if detector_scores
+            else np.empty((len(volumes), 0))
         )
 
         # Cache detector scores for later optimization

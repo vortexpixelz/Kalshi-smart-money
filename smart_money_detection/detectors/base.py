@@ -116,16 +116,9 @@ class BaseDetector(ABC):
         scores = self._score(array)
         return np.asarray(scores, dtype=float).reshape(-1)
 
-    # ------------------------------------------------------------------
-    # Internal API for subclasses
-    # ------------------------------------------------------------------
-    @abstractmethod
-    def _fit(self, X: np.ndarray, y: Optional[np.ndarray]) -> None:
-        """Subclass-specific fitting logic."""
-
-    @abstractmethod
-    def _score(self, X: np.ndarray) -> np.ndarray:
-        """Subclass-specific scoring logic."""
+        if values.ndim == 1:
+            values = values.reshape(-1, 1)
+        return values.astype(float)
 
     @abstractmethod
     def _scores_to_predictions(
@@ -153,8 +146,11 @@ class BaseDetector(ABC):
         else:
             array = np.asarray(X)
 
-        if array.ndim == 1:
-            array = np.reshape(array, (-1, 1))
+    @abstractmethod
+    def _scores_to_predictions(
+        self, scores: np.ndarray, X: Optional[InputData] = None
+    ) -> np.ndarray:
+        """Convert anomaly scores into binary predictions."""
 
         if array.ndim != 2:
             raise DetectorError("Input must be a 2-D array")
@@ -162,4 +158,4 @@ class BaseDetector(ABC):
         if not np.all(np.isfinite(array)):
             raise DetectorError("Input contains non-finite values")
 
-        return array.astype(float, copy=False)
+__all__ = ["BaseDetector", "DetectorProtocol", "DetectorError", "InputData"]

@@ -280,6 +280,18 @@ class KalshiClient(_KalshiBase):
             )
             return []
 
+    def login(self, email: str, password: str) -> Dict[str, Any]:
+        try:
+            response = self._request(
+                'POST',
+                '/trade-api/v2/login',
+                json={'email': email, 'password': password},
+            )
+            return response
+        except Exception as exc:
+            self.logger.error(f"Failed to login: {exc}")
+            return {}
+
     def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
         try:
             response = self._request('GET', f'/trade-api/v2/markets/{ticker}')
@@ -553,6 +565,18 @@ class AsyncKalshiClient(_KalshiBase):
                 },
             )
             return []
+
+    async def login(self, email: str, password: str) -> Dict[str, Any]:
+        try:
+            response = await self._request(
+                'POST',
+                '/trade-api/v2/login',
+                json={'email': email, 'password': password},
+            )
+            return response
+        except Exception as exc:
+            self.logger.error(f"Failed to login (async): {exc}")
+            return {}
 
     async def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
         try:
