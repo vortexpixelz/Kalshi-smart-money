@@ -162,7 +162,7 @@ python examples/basic_usage.py
 ```
 
 Demonstrates:
-- Fitting detector on synthetic data
+- Loading trade data from a CSV (expects `trades.csv`)
 - Making predictions
 - Active learning workflow
 - Feedback integration and weight updates

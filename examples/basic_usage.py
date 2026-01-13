@@ -2,59 +2,36 @@
 Basic usage example for smart money detection
 
 This example demonstrates:
-1. Loading trade data
+1. Loading trade data from CSV
 2. Fitting the detector
 3. Making predictions
 4. Using active learning to select manual reviews
-5. Adding feedback and updating weights
+5. Adding feedback and updating weights (if labels are available)
 """
-import numpy as np
 import pandas as pd
 from smart_money_detection import SmartMoneyDetector
 from smart_money_detection.config import load_config
 
-# Example: Generate synthetic trade data
-def generate_synthetic_trades(n_trades=1000, n_informed=50):
-    """Generate synthetic trade data with some informed trades"""
-    np.random.seed(42)
-
-    # Normal trades: moderate volumes
-    normal_volumes = np.random.lognormal(mean=3, sigma=1, size=n_trades - n_informed)
-
-    # Informed trades: larger volumes
-    informed_volumes = np.random.lognormal(mean=5, sigma=0.5, size=n_informed)
-
-    # Combine
-    volumes = np.concatenate([normal_volumes, informed_volumes])
-
-    # Timestamps (one per hour)
-    timestamps = pd.date_range('2024-01-01', periods=n_trades, freq='1H')
-
-    # Prices (random walk)
-    prices = 50 + np.cumsum(np.random.randn(n_trades) * 0.1)
-
-    # Create DataFrame
-    trades = pd.DataFrame({
-        'timestamp': timestamps,
-        'volume': volumes,
-        'price': prices,
-        'trade_id': range(n_trades),
-    })
-
-    # True labels (for evaluation only - not available in practice)
-    true_labels = np.zeros(n_trades)
-    true_labels[-n_informed:] = 1  # Last n_informed are smart money
-
-    return trades, true_labels
+def load_trades(csv_path: str) -> pd.DataFrame:
+    """Load trade data from a CSV file."""
+    trades = pd.read_csv(csv_path, parse_dates=["timestamp"])
+    required_columns = {"timestamp", "volume", "price"}
+    missing = required_columns - set(trades.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+    if "trade_id" not in trades.columns:
+        trades["trade_id"] = range(len(trades))
+    return trades
 
 
 def main():
     print("=== Smart Money Detection Example ===\n")
 
-    # 1. Generate synthetic data
-    print("1. Generating synthetic trade data...")
-    trades, true_labels = generate_synthetic_trades(n_trades=1000, n_informed=50)
-    print(f"   Generated {len(trades)} trades ({true_labels.sum():.0f} informed)\n")
+    # 1. Load trade data
+    print("1. Loading trade data...")
+    csv_path = "trades.csv"
+    trades = load_trades(csv_path)
+    print(f"   Loaded {len(trades)} trades from {csv_path}\n")
 
     # 2. Initialize detector with custom config
     print("2. Initializing smart money detector...")
@@ -95,53 +72,54 @@ def main():
     print(f"   Selected {len(query_indices)} trades with highest disagreement")
     print(f"   Trade IDs: {suggested_trades['trade_id'].tolist()}\n")
 
-    # 7. Simulate manual reviews (in practice, human would label these)
-    print("7. Simulating manual reviews...")
-    # Get true labels for suggested trades (cheating for demo)
-    sample_ids = suggested_trades['trade_id'].tolist()
-    manual_labels = true_labels[query_indices]
+    # 7. Add feedback (requires labels in the CSV)
+    if "label" in trades.columns:
+        print("7. Adding manual reviews from labels column...")
+        sample_ids = suggested_trades['trade_id'].tolist()
+        manual_labels = trades.loc[query_indices, "label"].values
 
-    # Add feedback
-    detector.add_feedback(
-        sample_ids,
-        manual_labels,
-        trades=trades.set_index('trade_id'),
-        volume_col='volume',
-        update_weights=True,
-    )
+        detector.add_feedback(
+            sample_ids,
+            manual_labels,
+            trades=trades.set_index('trade_id'),
+            volume_col='volume',
+            update_weights=True,
+        )
 
-    print(f"   Added {len(manual_labels)} manual reviews")
-    print(f"   Found {manual_labels.sum():.0f} informed trades in review batch\n")
+        print(f"   Added {len(manual_labels)} manual reviews")
+        print(f"   Found {manual_labels.sum():.0f} informed trades in review batch\n")
 
-    # 8. Check updated weights
-    print("8. Updated ensemble weights after feedback:")
-    updated_weights = detector.get_ensemble_weights()
-    for name, weight in updated_weights.items():
-        change = weight - weights[name]
-        print(f"   {name}: {weight:.3f} ({change:+.3f})")
-    print()
+        # 8. Check updated weights
+        print("8. Updated ensemble weights after feedback:")
+        updated_weights = detector.get_ensemble_weights()
+        for name, weight in updated_weights.items():
+            change = weight - weights[name]
+            print(f"   {name}: {weight:.3f} ({change:+.3f})")
+        print()
 
-    # 9. Get feedback statistics
-    print("9. Feedback statistics:")
-    stats = detector.get_feedback_statistics()
-    print(f"   Total reviews: {stats['n_total']}")
-    print(f"   Positive (smart money): {stats['n_positive']}")
-    print(f"   Negative (normal): {stats['n_negative']}")
-    print(f"   Optimal threshold: {stats['optimal_threshold']:.3f}\n")
+        # 9. Get feedback statistics
+        print("9. Feedback statistics:")
+        stats = detector.get_feedback_statistics()
+        print(f"   Total reviews: {stats['n_total']}")
+        print(f"   Positive (smart money): {stats['n_positive']}")
+        print(f"   Negative (normal): {stats['n_negative']}")
+        print(f"   Optimal threshold: {stats['optimal_threshold']:.3f}\n")
 
-    # 10. Evaluate performance (using true labels - only for demo)
-    print("10. Evaluating performance on all trades:")
-    metrics = detector.evaluate(trades, true_labels, volume_col='volume')
+        # 10. Evaluate performance
+        print("10. Evaluating performance on all trades:")
+        metrics = detector.evaluate(trades, trades["label"].values, volume_col='volume')
 
-    print(f"   Precision: {metrics['precision']:.3f}")
-    print(f"   Recall: {metrics['recall']:.3f}")
-    print(f"   F1 Score: {metrics['f1_score']:.3f}")
-    print(f"   Accuracy: {metrics['accuracy']:.3f}")
+        print(f"   Precision: {metrics['precision']:.3f}")
+        print(f"   Recall: {metrics['recall']:.3f}")
+        print(f"   F1 Score: {metrics['f1_score']:.3f}")
+        print(f"   Accuracy: {metrics['accuracy']:.3f}")
 
-    if 'roc_auc' in metrics:
-        print(f"   ROC AUC: {metrics['roc_auc']:.3f}")
+        if 'roc_auc' in metrics:
+            print(f"   ROC AUC: {metrics['roc_auc']:.3f}")
 
-    print()
+        print()
+    else:
+        print("7. Skipping feedback/evaluation (no 'label' column in CSV)\n")
 
     # 11. Save detector state
     print("11. Saving detector state...")

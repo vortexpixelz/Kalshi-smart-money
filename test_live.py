@@ -47,7 +47,7 @@ def print_section(text: str):
 
 def _build_detector(market: dict, trades: pd.DataFrame) -> SmartMoneyDetector:
     """Create and fit a :class:`SmartMoneyDetector` for the given market."""
-    config = Config()
+    config = load_config()
 
     market_volume = market.get('volume', 0)
     if market_volume > 1000000:
@@ -69,16 +69,20 @@ def _build_detector(market: dict, trades: pd.DataFrame) -> SmartMoneyDetector:
 
 @pytest.fixture(scope='module')
 def client() -> KalshiClient:
-    """Demo-mode Kalshi client for offline testing."""
-    return KalshiClient(demo_mode=True)
+    """Live Kalshi client for integration testing."""
+    api_key = os.getenv("KALSHI_API_KEY")
+    if not api_key:
+        pytest.skip("KALSHI_API_KEY is not set; skipping live Kalshi integration tests.")
+    api_base = os.getenv("KALSHI_API_BASE")
+    return KalshiClient(api_key=api_key, api_base=api_base)
 
 
 @pytest.fixture(scope='module')
 def markets(client: KalshiClient) -> list:
-    """Fetch demo markets or skip if none are available."""
+    """Fetch markets or skip if none are available."""
     market_list = client.get_markets(limit=10)
     if not market_list:
-        pytest.skip('No demo markets available')
+        pytest.skip('No markets available')
     return market_list
 
 
@@ -91,7 +95,7 @@ def market(markets: list) -> dict:
 def trades(client: KalshiClient, market: dict) -> pd.DataFrame:
     trade_history = client.get_trades(market['ticker'], limit=1000)
     if trade_history.empty:
-        pytest.skip('No trade data available in demo mode')
+        pytest.skip('No trade data available for market')
     return trade_history
 
 
@@ -111,7 +115,7 @@ def test_kalshi_connection(client: KalshiClient, markets: list):
 
     print("Fetching available markets...")
 
-    assert markets, "Expected at least one demo market"
+    assert markets, "Expected at least one market"
     print(f"✅ Successfully connected! Found {len(markets)} markets\n")
 
     # Display markets
@@ -144,7 +148,7 @@ def test_smart_money_detection(client: KalshiClient, market: dict, markets: list
     print_section("📊 Fetching Trade Data")
     print("Retrieving trade history...")
 
-    assert not trades.empty, "Expected trade data for demo market"
+    assert not trades.empty, "Expected trade data for market"
 
     print(f"✅ Fetched {len(trades)} trades")
     print(f"   Time range: {trades['timestamp'].min()} to {trades['timestamp'].max()}")
@@ -261,7 +265,7 @@ def test_smart_money_detection(client: KalshiClient, market: dict, markets: list
     except Exception as e:
         print(f"   ⚠️  VPIN calculation skipped: {e}")
 
-    # Active Learning Demo
+    # Active Learning Workflow
     print_section("🎓 Active Learning: Manual Review Suggestions")
 
     print("   Selecting trades for manual review (Query-by-Committee)...")
@@ -298,7 +302,7 @@ def test_feedback_loop(detector, trades, predictions):
     review_indices = np.random.choice(len(trades), size=5, replace=False)
     sample_ids = trades.iloc[review_indices]['trade_id'].tolist()
 
-    # Simulate labels (high volume = smart money for demo)
+    # Simulate labels (high volume = smart money heuristic)
     simulated_labels = (
         trades.iloc[review_indices]['volume'] > trades['volume'].quantile(0.9)
     ).astype(int).values
@@ -339,7 +343,7 @@ def main():
     print_header("🚀 Smart Money Detection - Live Test")
 
     print("This test will:")
-    print("1. Connect to Kalshi API (demo mode)")
+    print("1. Connect to Kalshi API")
     print("2. Fetch real market data")
     print("3. Detect smart money trades")
     print("4. Analyze results with VPIN")
@@ -349,7 +353,12 @@ def main():
     input("Press Enter to start... (or Ctrl+C to cancel)")
 
     try:
-        client = KalshiClient(demo_mode=True)
+        api_key = os.getenv("KALSHI_API_KEY")
+        if not api_key:
+            print("\n❌ KALSHI_API_KEY is not set. Exiting.")
+            return 1
+        api_base = os.getenv("KALSHI_API_BASE")
+        client = KalshiClient(api_key=api_key, api_base=api_base)
         markets = client.get_markets(limit=10)
 
         if not markets:

@@ -1,7 +1,4 @@
 import logging
-import time
-from typing import List
-
 import pandas as pd
 import pytest
 import requests
@@ -10,18 +7,6 @@ from smart_money_detection.kalshi_client import KalshiClient
 
 
 logger = logging.getLogger(__name__)
-
-
-@pytest.mark.integration
-@pytest.mark.sandbox
-@pytest.mark.usefixtures("sandbox_retry")
-def test_sandbox_authentication(live_kalshi_client: KalshiClient, sandbox_retry) -> None:
-    start = time.time()
-    result = sandbox_retry(live_kalshi_client.verify_authentication)
-    duration = time.time() - start
-    assert result is True, "Sandbox authentication failed"
-    assert duration >= 0
-    logger.info("Sandbox authentication succeeded in %.2fs", duration)
 
 
 @pytest.mark.integration
@@ -55,17 +40,8 @@ def test_get_trades_for_market(
     logger.info("Retrieved %d sandbox trades for %s", len(trades), ticker)
 
 
-@pytest.mark.usefixtures("sandbox_retry")
-def test_mock_markets_available(mock_kalshi_client: KalshiClient, sandbox_retry) -> None:
-    markets = sandbox_retry(lambda: mock_kalshi_client.get_markets(limit=5))
-    assert isinstance(markets, list)
-    tickers: List[str] = [market["ticker"] for market in markets]
-    assert tickers
-    assert all(isinstance(ticker, str) for ticker in tickers)
-
-
 def test_get_markets_handles_request_errors(monkeypatch, caplog) -> None:
-    client = KalshiClient(api_key="bad-key", api_base="https://api.example.com", demo_mode=False)
+    client = KalshiClient(api_key="bad-key", api_base="https://api.example.com")
 
     def _raise(*_args, **_kwargs):
         raise requests.exceptions.HTTPError("boom")
@@ -80,7 +56,7 @@ def test_get_markets_handles_request_errors(monkeypatch, caplog) -> None:
 
 
 def test_get_trades_handles_request_errors(monkeypatch, caplog) -> None:
-    client = KalshiClient(api_key="bad-key", api_base="https://api.example.com", demo_mode=False)
+    client = KalshiClient(api_key="bad-key", api_base="https://api.example.com")
 
     def _raise(*_args, **_kwargs):
         raise requests.exceptions.HTTPError("boom")

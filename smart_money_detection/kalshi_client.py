@@ -18,28 +18,16 @@ class _KalshiBase:
         self,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
-        demo_mode: bool = False,
     ) -> None:
         self.api_key = api_key or os.getenv('KALSHI_API_KEY')
         resolved_api_base = api_base if api_base is not None else os.getenv(
             'KALSHI_API_BASE', 'https://api.elections.kalshi.com'
         )
         self.api_base = resolved_api_base.rstrip('/')
-        env_demo = os.getenv('KALSHI_DEMO_MODE', 'false').lower() == 'true'
-        self.demo_mode = demo_mode or env_demo
         self.logger = logging.getLogger(__name__)
 
     def _build_url(self, endpoint: str) -> str:
         return f"{self.api_base}/{endpoint.lstrip('/')}"
-
-    def _get_mock_data(self, endpoint: str) -> Dict[str, Any]:
-        if 'markets' in endpoint and endpoint.endswith('markets'):
-            return self._mock_markets_list()
-        if 'market' in endpoint and 'trades' in endpoint:
-            return self._mock_trades()
-        if 'market' in endpoint:
-            return self._mock_market_details()
-        return {}
 
     @staticmethod
     def _format_trades(trades: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -61,85 +49,6 @@ class _KalshiBase:
 
         return df
 
-    def _mock_markets_list(self) -> Dict[str, Any]:
-        return {
-            'markets': [
-                {
-                    'ticker': 'PRES-2024-WINNER',
-                    'title': 'Will the Republican win the 2024 presidential election?',
-                    'yes_price': 52,
-                    'volume': 15000000,
-                    'open_interest': 8000000,
-                    'close_time': (datetime.now() + timedelta(days=180)).isoformat(),
-                    'status': 'active',
-                },
-                {
-                    'ticker': 'FED-2024-RATE',
-                    'title': 'Will the Fed cut rates in 2024?',
-                    'yes_price': 75,
-                    'volume': 5000000,
-                    'open_interest': 2500000,
-                    'close_time': (datetime.now() + timedelta(days=90)).isoformat(),
-                    'status': 'active',
-                },
-                {
-                    'ticker': 'TECH-EARNINGS-Q4',
-                    'title': 'Will tech earnings beat expectations?',
-                    'yes_price': 48,
-                    'volume': 500000,
-                    'open_interest': 250000,
-                    'close_time': (datetime.now() + timedelta(days=30)).isoformat(),
-                    'status': 'active',
-                },
-            ]
-        }
-
-    def _mock_market_details(self) -> Dict[str, Any]:
-        return {
-            'market': {
-                'ticker': 'PRES-2024-WINNER',
-                'title': 'Will the Republican win the 2024 presidential election?',
-                'yes_price': 52,
-                'volume': 15000000,
-                'open_interest': 8000000,
-                'close_time': (datetime.now() + timedelta(days=180)).isoformat(),
-                'status': 'active',
-                'last_updated': datetime.now().isoformat(),
-            }
-        }
-
-    def _mock_trades(self) -> Dict[str, Any]:
-        import numpy as np
-
-        np.random.seed(42)
-        n_trades = 500
-
-        timestamps = pd.date_range(
-            end=datetime.now(), periods=n_trades, freq='5min'
-        ).tolist()
-
-        volumes = np.random.lognormal(mean=5, sigma=2, size=n_trades)
-        smart_money_indices = np.random.choice(n_trades, size=int(n_trades * 0.05), replace=False)
-        volumes[smart_money_indices] *= 8
-
-        base_price = 52
-        price_changes = np.cumsum(np.random.randn(n_trades) * 0.5)
-        prices = base_price + price_changes
-        prices = np.clip(prices, 1, 99)
-
-        trades = []
-        for i in range(n_trades):
-            trades.append({
-                'trade_id': f'trade_{i}',
-                'timestamp': timestamps[i].isoformat(),
-                'volume': float(volumes[i]),
-                'price': float(prices[i]),
-                'side': 'buy' if np.random.rand() > 0.5 else 'sell',
-            })
-
-        return {'trades': trades}
-
-
 class KalshiClient(_KalshiBase):
     """Synchronous Kalshi REST client using ``requests``."""
 
@@ -147,15 +56,14 @@ class KalshiClient(_KalshiBase):
         self,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
-        demo_mode: bool = False,
         *,
         session: Optional[requests.Session] = None,
         timeout: Optional[float] = None,
     ) -> None:
-        super().__init__(api_key=api_key, api_base=api_base, demo_mode=demo_mode)
+        super().__init__(api_key=api_key, api_base=api_base)
         self.timeout = timeout or 10.0
         self.session = session or requests.Session()
-        if self.api_key and not self.demo_mode:
+        if self.api_key:
             self.session.headers.update({
                 'Authorization': f'Bearer {self.api_key}',
                 'Content-Type': 'application/json',
@@ -170,8 +78,6 @@ class KalshiClient(_KalshiBase):
             return response.json()
         except requests.RequestException as exc:
             self.logger.error(f"API request failed: {exc}")
-            if self.demo_mode:
-                return self._get_mock_data(endpoint)
             raise
 
     def get_markets(
@@ -179,10 +85,6 @@ class KalshiClient(_KalshiBase):
         status: str = 'active',
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        if self.demo_mode:
-            data = self._mock_markets_list()
-            return data.get('markets', [])
-
         try:
             response = self._request(
                 'GET',
@@ -195,12 +97,6 @@ class KalshiClient(_KalshiBase):
             return []
 
     def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
-        if self.demo_mode:
-            data = self._mock_market_details()
-            market = data.get('market', {})
-            market['ticker'] = ticker
-            return market
-
         try:
             response = self._request('GET', f'/trade-api/v2/markets/{ticker}')
             return response.get('market')
@@ -215,25 +111,21 @@ class KalshiClient(_KalshiBase):
         min_ts: Optional[datetime] = None,
         max_ts: Optional[datetime] = None,
     ) -> pd.DataFrame:
-        if self.demo_mode:
-            data = self._mock_trades()
-            trades = data.get('trades', [])
-        else:
-            try:
-                params = {'limit': limit}
-                if min_ts:
-                    params['min_ts'] = int(min_ts.timestamp())
-                if max_ts:
-                    params['max_ts'] = int(max_ts.timestamp())
-                response = self._request(
-                    'GET',
-                    f'/trade-api/v2/markets/{ticker}/trades',
-                    params=params,
-                )
-                trades = response.get('trades', [])
-            except Exception as exc:
-                self.logger.error(f"Failed to fetch trades for {ticker}: {exc}")
-                return pd.DataFrame()
+        try:
+            params = {'limit': limit}
+            if min_ts:
+                params['min_ts'] = int(min_ts.timestamp())
+            if max_ts:
+                params['max_ts'] = int(max_ts.timestamp())
+            response = self._request(
+                'GET',
+                f'/trade-api/v2/markets/{ticker}/trades',
+                params=params,
+            )
+            trades = response.get('trades', [])
+        except Exception as exc:
+            self.logger.error(f"Failed to fetch trades for {ticker}: {exc}")
+            return pd.DataFrame()
 
         return self._format_trades(trades)
 
@@ -283,17 +175,16 @@ class AsyncKalshiClient(_KalshiBase):
         self,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
-        demo_mode: bool = False,
         *,
         client: Optional[httpx.AsyncClient] = None,
         timeout: Optional[float] = None,
     ) -> None:
-        super().__init__(api_key=api_key, api_base=api_base, demo_mode=demo_mode)
+        super().__init__(api_key=api_key, api_base=api_base)
         self.timeout = timeout or 10.0
         self._owns_client = client is None
 
         headers = {'Content-Type': 'application/json'}
-        if self.api_key and not self.demo_mode:
+        if self.api_key:
             headers['Authorization'] = f'Bearer {self.api_key}'
 
         if client is None:
@@ -315,8 +206,6 @@ class AsyncKalshiClient(_KalshiBase):
             return response.json()
         except httpx.HTTPError as exc:
             self.logger.error(f"Async API request failed: {exc}")
-            if self.demo_mode:
-                return self._get_mock_data(endpoint)
             raise
 
     async def get_markets(
@@ -324,10 +213,6 @@ class AsyncKalshiClient(_KalshiBase):
         status: str = 'active',
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        if self.demo_mode:
-            data = self._mock_markets_list()
-            return data.get('markets', [])
-
         try:
             response = await self._request(
                 'GET',
@@ -340,12 +225,6 @@ class AsyncKalshiClient(_KalshiBase):
             return []
 
     async def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
-        if self.demo_mode:
-            data = self._mock_market_details()
-            market = data.get('market', {})
-            market['ticker'] = ticker
-            return market
-
         try:
             response = await self._request('GET', f'/trade-api/v2/markets/{ticker}')
             return response.get('market')
@@ -360,25 +239,21 @@ class AsyncKalshiClient(_KalshiBase):
         min_ts: Optional[datetime] = None,
         max_ts: Optional[datetime] = None,
     ) -> pd.DataFrame:
-        if self.demo_mode:
-            data = self._mock_trades()
-            trades = data.get('trades', [])
-        else:
-            try:
-                params = {'limit': limit}
-                if min_ts:
-                    params['min_ts'] = int(min_ts.timestamp())
-                if max_ts:
-                    params['max_ts'] = int(max_ts.timestamp())
-                response = await self._request(
-                    'GET',
-                    f'/trade-api/v2/markets/{ticker}/trades',
-                    params=params,
-                )
-                trades = response.get('trades', [])
-            except Exception as exc:
-                self.logger.error(f"Failed to fetch trades for {ticker} (async): {exc}")
-                return pd.DataFrame()
+        try:
+            params = {'limit': limit}
+            if min_ts:
+                params['min_ts'] = int(min_ts.timestamp())
+            if max_ts:
+                params['max_ts'] = int(max_ts.timestamp())
+            response = await self._request(
+                'GET',
+                f'/trade-api/v2/markets/{ticker}/trades',
+                params=params,
+            )
+            trades = response.get('trades', [])
+        except Exception as exc:
+            self.logger.error(f"Failed to fetch trades for {ticker} (async): {exc}")
+            return pd.DataFrame()
 
         return self._format_trades(trades)
 
