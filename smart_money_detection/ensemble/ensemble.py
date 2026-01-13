@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 import numpy as np
 import pandas as pd
-= codex/refactor-config-and-orchestration-layers
-from typing import Any, Dict, List, Optional, Union
 
 from ..detectors.base import DetectorProtocol
-
-from typing import List, Optional, Dict, Any, Union, Tuple
-from ..detectors.base import BaseDetector
- main
 from .weighting import (
     ContextualUCBWeighting,
     MultiplicativeWeightsUpdate,
@@ -93,22 +87,21 @@ class AnomalyEnsemble:
 
         if method == 'uniform':
             return UniformWeighting(self.n_detectors)
-        elif method == 'mwu':
+        if method == 'mwu':
             learning_rate = params.get('learning_rate', 0.3)
             return MultiplicativeWeightsUpdate(self.n_detectors, learning_rate)
-        elif method == 'thompson':
+        if method == 'thompson':
             alpha_prior = params.get('alpha_prior', 1.0)
             beta_prior = params.get('beta_prior', 1.0)
             return ThompsonSamplingWeighting(self.n_detectors, alpha_prior, beta_prior)
-        elif method == 'ucb':
+        if method == 'ucb':
             exploration_param = params.get('exploration_param', 1.0)
             return UCBWeighting(self.n_detectors, exploration_param)
-        elif method == 'contextual_ucb':
+        if method == 'contextual_ucb':
             exploration_param = params.get('exploration_param', 1.0)
             n_clusters = params.get('n_context_clusters', 10)
             return ContextualUCBWeighting(self.n_detectors, exploration_param, n_clusters)
-        else:
-            raise ValueError(f"Unknown weighting method: {method}")
+        raise ValueError(f"Unknown weighting method: {method}")
 
     def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
         """
@@ -201,7 +194,7 @@ class AnomalyEnsemble:
 
     def get_detector_contributions(
         self, X: Union[np.ndarray, pd.DataFrame]
-    ) -> Dict[str, np.ndarray]:
+    ) -> Dict[str, Dict[str, Any]]:
         """
         Get individual detector scores and contributions
 
@@ -216,7 +209,7 @@ class AnomalyEnsemble:
         _, normalized_scores = self._compute_normalized_score_matrix(X)
         weights = self.get_weights()
 
-        contributions = {}
+        contributions: Dict[str, Dict[str, Any]] = {}
 
         for i, (detector, scores) in enumerate(zip(self.detectors, normalized_scores)):
             contributions[detector.name] = {
@@ -327,9 +320,7 @@ class AnomalyEnsemble:
 
         self._calibrator = calibrator
 
-    def fit_calibrator(
-        self, scores: np.ndarray, y_true: np.ndarray
-    ) -> None:
+    def fit_calibrator(self, scores: np.ndarray, y_true: np.ndarray) -> None:
         """Fit the attached calibrator using labelled scores."""
 
         if self._calibrator is None:

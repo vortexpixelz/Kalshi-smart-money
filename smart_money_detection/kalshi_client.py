@@ -1,6 +1,7 @@
 """Kalshi API clients providing sync and async access layers."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
@@ -300,4 +301,42 @@ class AsyncKalshiClient(_KalshiBase):
         await self.aclose()
 
 
-__all__ = ['KalshiClient', 'AsyncKalshiClient']
+class SyncKalshiClientAdapter:
+    """Sync adapter for the async Kalshi client."""
+
+    def __init__(self, async_client: AsyncKalshiClient) -> None:
+        self._client = async_client
+
+    def _run(self, coro):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        raise RuntimeError(
+            "Sync adapter cannot be used within a running event loop. "
+            "Use AsyncKalshiClient directly in async contexts."
+        )
+
+    def get_markets(self, *args, **kwargs):
+        return self._run(self._client.get_markets(*args, **kwargs))
+
+    def get_market(self, *args, **kwargs):
+        return self._run(self._client.get_market(*args, **kwargs))
+
+    def get_trades(self, *args, **kwargs):
+        return self._run(self._client.get_trades(*args, **kwargs))
+
+    def get_market_summary(self, *args, **kwargs):
+        return self._run(self._client.get_market_summary(*args, **kwargs))
+
+    def close(self) -> None:
+        self._run(self._client.aclose())
+
+    def __enter__(self) -> "SyncKalshiClientAdapter":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+
+__all__ = ['KalshiClient', 'AsyncKalshiClient', 'SyncKalshiClientAdapter']
