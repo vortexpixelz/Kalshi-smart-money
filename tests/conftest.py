@@ -1,6 +1,5 @@
 import os
 import sys
- codex/add-automated-tests-for-kalshi-client-ts4k5p
 import time
 from pathlib import Path
 from typing import Callable, Dict, Optional
@@ -62,34 +61,7 @@ def live_kalshi_client(
 
     api_base = sandbox_credentials.get("api_base") or "https://demo-api.kalshi.com"
 
-    client = KalshiClient(api_key=api_key, api_base=api_base, demo_mode=False)
-    yield client
-    client.close()
-
-
-@pytest.fixture(scope="session")
-def mock_kalshi_client() -> KalshiClient:
-    client = KalshiClient(demo_mode=True)
-    yield client
-    client.close()
-
-
-@pytest.fixture(scope="session")
-def kalshi_client(
-    sandbox_mode: bool,
-    sandbox_credentials: Dict[str, Optional[str]],
-) -> KalshiClient:
-    if sandbox_mode:
-        api_key = sandbox_credentials.get("api_key")
-        if not api_key:
-            pytest.skip(
-                "Sandbox credentials missing. Set KALSHI_SANDBOX_API_KEY to run live tests."
-            )
-        api_base = sandbox_credentials.get("api_base") or "https://demo-api.kalshi.com"
-        client = KalshiClient(api_key=api_key, api_base=api_base, demo_mode=False)
-    else:
-        client = KalshiClient(demo_mode=True)
-
+    client = KalshiClient(api_key=api_key, api_base=api_base)
     yield client
     client.close()
 
@@ -111,7 +83,3 @@ def sandbox_retry() -> Callable[[Callable[[], object], int, float], object]:
         return None
 
     return _retry
-
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
- main

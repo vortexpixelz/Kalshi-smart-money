@@ -16,25 +16,6 @@ def deterministic_config() -> Config:
 
 
 @pytest.fixture(scope="module")
-def synthetic_trades() -> pd.DataFrame:
-    rng = np.random.default_rng(1234)
-    timestamps = pd.date_range("2024-01-01", periods=200, freq="5min")
-    volumes = rng.lognormal(mean=5, sigma=0.6, size=200)
-    prices = np.clip(rng.normal(loc=50, scale=3, size=200), 1, 99)
-    sides = np.where(rng.random(size=200) > 0.5, "buy", "sell")
-
-    return pd.DataFrame(
-        {
-            "trade_id": [f"synthetic_{i}" for i in range(200)],
-            "timestamp": timestamps,
-            "volume": volumes,
-            "price": prices,
-            "side": sides,
-        }
-    )
-
-
-@pytest.fixture(scope="module")
 def sandbox_snapshot_trades() -> pd.DataFrame:
     snapshot_path = Path(__file__).resolve().parent.parent / "data" / "sandbox_trades_snapshot.json"
     df = pd.read_json(snapshot_path)
@@ -42,17 +23,17 @@ def sandbox_snapshot_trades() -> pd.DataFrame:
     return df
 
 
-def test_fit_and_predict_with_synthetic_data(
-    synthetic_trades: pd.DataFrame, deterministic_config: Config
+def test_fit_and_predict_with_snapshot_data(
+    sandbox_snapshot_trades: pd.DataFrame, deterministic_config: Config
 ) -> None:
     detector = SmartMoneyDetector(config=deterministic_config)
-    detector.fit(synthetic_trades, price_col="price")
+    detector.fit(sandbox_snapshot_trades, price_col="price")
 
-    scores = detector.score(synthetic_trades)
-    predictions = detector.predict(synthetic_trades)
+    scores = detector.score(sandbox_snapshot_trades)
+    predictions = detector.predict(sandbox_snapshot_trades)
 
-    assert scores.shape[0] == len(synthetic_trades)
-    assert predictions.shape[0] == len(synthetic_trades)
+    assert scores.shape[0] == len(sandbox_snapshot_trades)
+    assert predictions.shape[0] == len(sandbox_snapshot_trades)
     assert set(predictions).issubset({0, 1})
 
 
@@ -69,13 +50,13 @@ def test_regression_scores_with_snapshot_data(
 
 
 def test_manual_review_suggestions_respect_request(
-    synthetic_trades: pd.DataFrame, deterministic_config: Config
+    sandbox_snapshot_trades: pd.DataFrame, deterministic_config: Config
 ) -> None:
     detector = SmartMoneyDetector(config=deterministic_config)
-    detector.fit(synthetic_trades, price_col="price")
+    detector.fit(sandbox_snapshot_trades, price_col="price")
 
     query_indices, suggested = detector.suggest_manual_reviews(
-        synthetic_trades, n_queries=5
+        sandbox_snapshot_trades, n_queries=5
     )
 
     assert len(query_indices) == 5
@@ -83,10 +64,10 @@ def test_manual_review_suggestions_respect_request(
     assert set(suggested.columns).issuperset({"trade_id", "timestamp", "volume"})
 
 
-def test_predict_requires_fit(synthetic_trades: pd.DataFrame) -> None:
+def test_predict_requires_fit(sandbox_snapshot_trades: pd.DataFrame) -> None:
     detector = SmartMoneyDetector()
     with pytest.raises(RuntimeError):
-        detector.predict(synthetic_trades)
+        detector.predict(sandbox_snapshot_trades)
 
 
 def test_fit_with_empty_dataframe_logs_warning(

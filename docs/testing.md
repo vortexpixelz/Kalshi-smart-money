@@ -1,6 +1,6 @@
 # Testing Guide
 
-This project uses `pytest` for both unit and integration coverage. The suite can run entirely with mocked data, but several integration checks can be executed against the Kalshi sandbox when credentials are available.
+This project uses `pytest` for both unit and integration coverage. Integration checks can be executed against the Kalshi sandbox when credentials are available.
 
 ## Environment Variables
 
@@ -25,7 +25,7 @@ export KALSHI_SANDBOX_API_BASE="https://demo-api.kalshi.com"
 
 ## Running the Tests
 
-Run the full mocked suite (fast path):
+Run the unit tests and offline checks:
 
 ```bash
 pytest

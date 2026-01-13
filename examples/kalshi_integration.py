@@ -9,89 +9,38 @@ This demonstrates how to:
 """
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
 from smart_money_detection import SmartMoneyDetector
 from smart_money_detection.config import load_config
+from smart_money_detection.kalshi_client import KalshiClient
 from smart_money_detection.models import VPINClassifier
 
-
-class KalshiDataFetcher:
-    """
-    Mock Kalshi API client for demonstration
-
-    In practice, replace with actual Kalshi API calls
-    """
-
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key
-
-    def get_market(self, market_id: str) -> dict:
-        """Get market information"""
-        # Mock data
-        return {
-            'market_id': market_id,
-            'title': 'Will candidate win election?',
-            'close_time': datetime.now() + timedelta(days=30),
-            'volume': 1000000,
-            'open_interest': 500000,
-        }
-
-    def get_trades(self, market_id: str, limit: int = 1000) -> pd.DataFrame:
-        """Get recent trades for a market"""
-        # Generate mock trade data
-        np.random.seed(42)
-
-        n_trades = limit
-        timestamps = pd.date_range(
-            end=datetime.now(), periods=n_trades, freq='5min'
-        )
-
-        # Volume distribution: mostly small, some large
-        volumes = np.random.lognormal(mean=4, sigma=2, size=n_trades)
-
-        # Add some very large trades (potential smart money)
-        n_large = int(n_trades * 0.05)
-        large_indices = np.random.choice(n_trades, size=n_large, replace=False)
-        volumes[large_indices] *= 5
-
-        # Prices (binary market: 0-100 cents)
-        prices = 45 + np.cumsum(np.random.randn(n_trades) * 0.5)
-        prices = np.clip(prices, 1, 99)
-
-        trades = pd.DataFrame({
-            'timestamp': timestamps,
-            'volume': volumes,
-            'price': prices,
-            'trade_id': range(n_trades),
-            'market_id': market_id,
-        })
-
-        return trades
-
-
-def detect_smart_money_kalshi(market_id: str, api_key: str = None):
+def detect_smart_money_kalshi(ticker: str, api_key: str | None = None):
     """
     Detect smart money trades in a Kalshi market
 
     Args:
-        market_id: Kalshi market identifier
-        api_key: Kalshi API key (optional for demo)
+        ticker: Kalshi market ticker (e.g., "PRES-2024-WINNER")
+        api_key: Kalshi API key (optional; falls back to KALSHI_API_KEY env var)
     """
-    print(f"=== Smart Money Detection for Kalshi Market: {market_id} ===\n")
+    print(f"=== Smart Money Detection for Kalshi Market: {ticker} ===\n")
 
     # 1. Initialize Kalshi client
     print("1. Connecting to Kalshi API...")
-    client = KalshiDataFetcher(api_key)
+    with KalshiClient(api_key=api_key) as client:
+        market = client.get_market(ticker)
+        if not market:
+            raise RuntimeError(f"No market found for ticker {ticker}")
 
-    market = client.get_market(market_id)
-    print(f"   Market: {market['title']}")
-    print(f"   Volume: ${market['volume']:,.0f}")
-    print(f"   Open Interest: ${market['open_interest']:,.0f}\n")
+        print(f"   Market: {market['title']}")
+        print(f"   Volume: ${market['volume']:,.0f}")
+        print(f"   Open Interest: ${market['open_interest']:,.0f}\n")
 
-    # 2. Fetch recent trades
-    print("2. Fetching recent trades...")
-    trades = client.get_trades(market_id, limit=1000)
-    print(f"   Fetched {len(trades)} trades\n")
+        # 2. Fetch recent trades
+        print("2. Fetching recent trades...")
+        trades = client.get_trades(ticker, limit=1000)
+        if trades.empty:
+            raise RuntimeError(f"No trades returned for ticker {ticker}")
+        print(f"   Fetched {len(trades)} trades\n")
 
     # 3. Initialize detector with market-specific config
     print("3. Initializing smart money detector...")
@@ -190,15 +139,15 @@ def detect_smart_money_kalshi(market_id: str, api_key: str = None):
 def main():
     """Run Kalshi integration example"""
 
-    # Example market ID (replace with actual Kalshi market)
-    market_id = "PRES-2024-WINNER"
+    # Example market ticker (replace with actual Kalshi market)
+    ticker = "PRES-2024-WINNER"
 
     # Run detection
-    detector, smart_money_trades = detect_smart_money_kalshi(market_id)
+    detector, smart_money_trades = detect_smart_money_kalshi(ticker)
 
     # Optional: Save results
-    smart_money_trades.to_csv(f'smart_money_{market_id}.csv', index=False)
-    print(f"\nSaved results to smart_money_{market_id}.csv")
+    smart_money_trades.to_csv(f'smart_money_{ticker}.csv', index=False)
+    print(f"\nSaved results to smart_money_{ticker}.csv")
 
 
 if __name__ == '__main__':

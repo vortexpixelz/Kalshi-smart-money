@@ -75,7 +75,6 @@ Create a `.env` file:
 KALSHI_API_KEY=your_key_here
 # Optional: override the default Kalshi API base URL
 KALSHI_API_BASE=https://api.elections.kalshi.com
-KALSHI_DEMO_MODE=false  # Set to true for demo mode
 
 # Detection settings
 DETECTION_THRESHOLD=0.75
@@ -135,13 +134,6 @@ docker-compose logs
 # Remove old containers
 docker-compose down -v
 docker-compose up --build
-```
-
-### API connection issues:
-```bash
-# Test in demo mode first
-export KALSHI_DEMO_MODE=true
-docker-compose up
 ```
 
 ## Production Deployment
