@@ -12,6 +12,28 @@
 - Simplified committee scoring via single-pass `predict_with_scores` and cached normalized score matrices inside `SmartMoneyDetector.score`, eliminating redundant detector passes for manual review suggestions and weight optimization.
 - Hardened `KalshiClient`/`AsyncKalshiClient` with retry/backoff, typed exceptions, and DataFrame hygiene via the new `utils.pandas_utils` helpers (vectorized `assign`, categorical conversion) to reduce repeated downstream cleanup.
 
+## Optimization Impact Summary
+
+| Optimization Area | Expected Impact | Status | Notes |
+| --- | --- | --- | --- |
+| Temporal feature construction | High | In progress | Cache encoded timestamps or precompute cyclic features. |
+| Ensemble input normalization | Medium | Completed | Single conversion/normalization per batch. |
+| Active-learning scoring | Medium | In progress | Share detector score matrix between `predict` and `score`. |
+| Metrics utilities | Low | Completed | Vectorized bootstrap and cross-validation helpers. |
+
+```mermaid
+xychart-beta
+    title "Relative Optimization Impact (Estimated)"
+    x-axis ["Temporal encoding","Ensemble normalization","Active-learning scoring","Metrics utilities"]
+    y-axis "Impact score" 0 --> 5
+    bar [5,3,3,2]
+```
+
+### Interpretation
+- The biggest remaining lever is temporal feature caching; the scoring path touches this on every request and dominates runtime when timestamps are present.
+- Completed ensemble normalization work already removed repeated conversions, which should improve throughput for large batches.
+- Active-learning scoring remains a medium-impact opportunity because it reuses the same detector outputs; consolidating those calls should reduce redundant computation.
+
 ## Residual Technical Debt
 - Temporal encoding still rebuilds feature matrices on every request. Caching encoded timestamps or exposing incremental update APIs would reduce overhead for streaming ticks or backtesting.
 - Ensemble calibration expects external calibrators to provide a `transform` method. Shipping a default calibrator (e.g., isotonic regression or Platt scaling) would simplify adoption and make probability semantics uniform by default.

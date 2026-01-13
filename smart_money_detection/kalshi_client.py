@@ -6,50 +6,54 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Set, Tuple, TypeVar, Union
 
 import httpx
 import pandas as pd
 import requests
 
-from .utils import trades_from_records
+ResponsePayload = TypeVar('ResponsePayload')
+MockResponder = Callable[[str, str, Dict[str, Any]], 'KalshiMockResponse']
+AsyncMockResponder = Callable[[str, str, Dict[str, Any]], Awaitable['KalshiMockResponse']]
 
 
-DEFAULT_RETRY_STATUSES = {408, 429, 500, 502, 503, 504}
+@dataclass(frozen=True)
+class RequestMetrics:
+    latency: float
+    retries_attempted: int
 
 
-class KalshiClientError(RuntimeError):
-    """Base error raised by Kalshi client operations."""
+@dataclass(frozen=True)
+class KalshiApiResponse(Generic[ResponsePayload]):
+    endpoint: str
+    status_code: int
+    data: ResponsePayload
+    metrics: RequestMetrics
 
 
-class KalshiRequestError(KalshiClientError):
-    """Raised when a request fails before receiving a response."""
-
-    def __init__(self, message: str, *, method: str, endpoint: str) -> None:
-        super().__init__(message)
-        self.method = method
-        self.endpoint = endpoint
+@dataclass(frozen=True)
+class KalshiMockResponse:
+    status_code: int
+    data: Dict[str, Any]
+    body: Optional[str] = None
 
 
-class KalshiAPIError(KalshiClientError):
-    """Raised when the Kalshi API returns an error response."""
-
+class KalshiApiError(RuntimeError):
     def __init__(
         self,
         message: str,
         *,
-        method: str,
         endpoint: str,
-        status_code: Optional[int] = None,
-        response_text: Optional[str] = None,
-        payload: Optional[Dict[str, Any]] = None,
+        status_code: Optional[int],
+        response_body: Optional[str],
+        retries_attempted: int,
     ) -> None:
         super().__init__(message)
-        self.method = method
         self.endpoint = endpoint
         self.status_code = status_code
-        self.response_text = response_text
-        self.payload = payload
+        self.response_body = response_body
+        self.retries_attempted = retries_attempted
 
 
 class _KalshiBase:
@@ -73,6 +77,13 @@ class _KalshiBase:
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self.retry_statuses = set(retry_statuses or DEFAULT_RETRY_STATUSES)
+
+    @staticmethod
+    def _parse_json(response: requests.Response) -> Dict[str, Any]:
+        try:
+            return response.json()
+        except ValueError:
+            return {}
 
     def _build_url(self, endpoint: str) -> str:
         return f"{self.api_base}/{endpoint.lstrip('/')}"
@@ -105,10 +116,11 @@ class KalshiClient(_KalshiBase):
         api_base: Optional[str] = None,
         *,
         session: Optional[requests.Session] = None,
-        timeout: Optional[float] = None,
-        max_retries: int = 3,
+        timeout: Optional[Union[float, Tuple[float, float]]] = None,
+        max_retries: int = 2,
         backoff_factor: float = 0.5,
-        retry_statuses: Optional[Sequence[int]] = None,
+        retry_statuses: Optional[Set[int]] = None,
+        mock_responder: Optional[MockResponder] = None,
     ) -> None:
         super().__init__(
             api_key=api_key,
@@ -119,75 +131,170 @@ class KalshiClient(_KalshiBase):
         )
         self.timeout = timeout or 10.0
         self.session = session or requests.Session()
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        self.retry_statuses = retry_statuses or {429, 500, 502, 503, 504}
+        self.mock_responder = mock_responder
         if self.api_key:
             self.session.headers.update({
                 'Authorization': f'Bearer {self.api_key}',
                 'Content-Type': 'application/json',
             })
 
-    def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+    def _request(self, method: str, endpoint: str, **kwargs) -> KalshiApiResponse[Dict[str, Any]]:
         url = self._build_url(endpoint)
         kwargs.setdefault('timeout', self.timeout)
+        if self.mock_responder:
+            start = time.monotonic()
+            mock_response = self.mock_responder(method, endpoint, kwargs)
+            metrics = RequestMetrics(
+                latency=time.monotonic() - start,
+                retries_attempted=0,
+            )
+            self.logger.info(
+                "Kalshi mock request completed",
+                extra={
+                    'endpoint': endpoint,
+                    'status_code': mock_response.status_code,
+                    'latency': metrics.latency,
+                    'retries_attempted': metrics.retries_attempted,
+                },
+            )
+            if not (200 <= mock_response.status_code < 300):
+                raise KalshiApiError(
+                    "Mock request failed",
+                    endpoint=endpoint,
+                    status_code=mock_response.status_code,
+                    response_body=mock_response.body,
+                    retries_attempted=0,
+                )
+            return KalshiApiResponse(
+                endpoint=endpoint,
+                status_code=mock_response.status_code,
+                data=mock_response.data,
+                metrics=metrics,
+            )
 
-        for attempt in range(self.max_retries + 1):
+        retries_attempted = 0
+        start = time.monotonic()
+        last_exception: Optional[BaseException] = None
+        while True:
             try:
                 response = self.session.request(method, url, **kwargs)
-                response.raise_for_status()
-                return response.json()
-            except requests.HTTPError as exc:
-                status_code = exc.response.status_code if exc.response is not None else None
-                response_text = exc.response.text if exc.response is not None else None
-                if status_code in self.retry_statuses and attempt < self.max_retries:
-                    self._log_retry(attempt, method, endpoint, status_code)
-                    time.sleep(self._get_backoff_seconds(attempt))
+                status_code = response.status_code
+                if status_code in self.retry_statuses and retries_attempted < self.max_retries:
+                    retries_attempted += 1
+                    backoff = self.backoff_factor * (2 ** (retries_attempted - 1))
+                    self.logger.warning(
+                        "Kalshi request retrying",
+                        extra={
+                            'endpoint': endpoint,
+                            'status_code': status_code,
+                            'retries_attempted': retries_attempted,
+                            'backoff': backoff,
+                        },
+                    )
+                    time.sleep(backoff)
                     continue
-                self.logger.error("API request failed: %s", exc)
-                raise KalshiAPIError(
-                    "Kalshi API error",
-                    method=method,
+                if not (200 <= status_code < 300):
+                    raise KalshiApiError(
+                        "API request returned non-success status",
+                        endpoint=endpoint,
+                        status_code=status_code,
+                        response_body=response.text,
+                        retries_attempted=retries_attempted,
+                    )
+                metrics = RequestMetrics(
+                    latency=time.monotonic() - start,
+                    retries_attempted=retries_attempted,
+                )
+                self.logger.info(
+                    "Kalshi request completed",
+                    extra={
+                        'endpoint': endpoint,
+                        'status_code': status_code,
+                        'latency': metrics.latency,
+                        'retries_attempted': retries_attempted,
+                    },
+                )
+                return KalshiApiResponse(
                     endpoint=endpoint,
                     status_code=status_code,
-                    response_text=response_text,
-                ) from exc
+                    data=self._parse_json(response),
+                    metrics=metrics,
+                )
             except requests.RequestException as exc:
-                if attempt < self.max_retries:
-                    self._log_retry(attempt, method, endpoint, None)
-                    time.sleep(self._get_backoff_seconds(attempt))
+                last_exception = exc
+                if retries_attempted < self.max_retries:
+                    retries_attempted += 1
+                    backoff = self.backoff_factor * (2 ** (retries_attempted - 1))
+                    self.logger.warning(
+                        "Kalshi request retrying after exception",
+                        extra={
+                            'endpoint': endpoint,
+                            'exception': str(exc),
+                            'retries_attempted': retries_attempted,
+                            'backoff': backoff,
+                        },
+                    )
+                    time.sleep(backoff)
                     continue
-                self.logger.error("API request failed: %s", exc)
-                raise KalshiRequestError(
-                    "Kalshi request failed",
-                    method=method,
-                    endpoint=endpoint,
-                ) from exc
-            except ValueError as exc:
-                self.logger.error("Failed to decode JSON response: %s", exc)
-                raise KalshiAPIError(
-                    "Kalshi API returned invalid JSON",
-                    method=method,
-                    endpoint=endpoint,
-                    response_text=getattr(response, "text", None),
-                ) from exc
+                break
 
-        raise KalshiRequestError(
-            "Kalshi request failed after retries",
-            method=method,
+        self.logger.error(
+            "API request failed",
+            extra={
+                'endpoint': endpoint,
+                'exception': str(last_exception),
+                'retries_attempted': retries_attempted,
+            },
+        )
+        raise KalshiApiError(
+            "API request failed",
             endpoint=endpoint,
+            status_code=None,
+            response_body=str(last_exception),
+            retries_attempted=retries_attempted,
         )
 
-    def get_markets(self, status: str = 'active', limit: int = 100) -> List[Dict[str, Any]]:
-        """Fetch a list of markets filtered by status."""
-        response = self._request(
-            'GET',
-            '/trade-api/v2/markets',
-            params={'status': status, 'limit': limit},
-        )
-        return response.get('markets', [])
+    def get_markets(
+        self,
+        status: str = 'active',
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        try:
+            response = self._request(
+                'GET',
+                '/trade-api/v2/markets',
+                params={'status': status, 'limit': limit},
+            )
+            return response.data.get('markets', [])
+        except KalshiApiError as exc:
+            self.logger.error(
+                "Failed to fetch markets",
+                extra={
+                    'endpoint': exc.endpoint,
+                    'status_code': exc.status_code,
+                    'response_body': exc.response_body,
+                },
+            )
+            return []
 
     def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
-        """Fetch metadata for a specific market."""
-        response = self._request('GET', f'/trade-api/v2/markets/{ticker}')
-        return response.get('market')
+        try:
+            response = self._request('GET', f'/trade-api/v2/markets/{ticker}')
+            return response.data.get('market')
+        except KalshiApiError as exc:
+            self.logger.error(
+                "Failed to fetch market",
+                extra={
+                    'endpoint': exc.endpoint,
+                    'status_code': exc.status_code,
+                    'response_body': exc.response_body,
+                    'ticker': ticker,
+                },
+            )
+            return None
 
     def get_trades(
         self,
@@ -196,18 +303,30 @@ class KalshiClient(_KalshiBase):
         min_ts: Optional[datetime] = None,
         max_ts: Optional[datetime] = None,
     ) -> pd.DataFrame:
-        """Fetch recent trades for the provided ticker."""
-        params = {'limit': limit}
-        if min_ts:
-            params['min_ts'] = int(min_ts.timestamp())
-        if max_ts:
-            params['max_ts'] = int(max_ts.timestamp())
-        response = self._request(
-            'GET',
-            f'/trade-api/v2/markets/{ticker}/trades',
-            params=params,
-        )
-        trades = response.get('trades', [])
+        try:
+            params = {'limit': limit}
+            if min_ts:
+                params['min_ts'] = int(min_ts.timestamp())
+            if max_ts:
+                params['max_ts'] = int(max_ts.timestamp())
+            response = self._request(
+                'GET',
+                f'/trade-api/v2/markets/{ticker}/trades',
+                params=params,
+            )
+            trades = response.data.get('trades', [])
+        except KalshiApiError as exc:
+            self.logger.error(
+                "Failed to fetch trades",
+                extra={
+                    'endpoint': exc.endpoint,
+                    'status_code': exc.status_code,
+                    'response_body': exc.response_body,
+                    'ticker': ticker,
+                },
+            )
+            return pd.DataFrame()
+
         return self._format_trades(trades)
 
     def get_market_summary(self, ticker: str) -> Dict[str, Any]:
@@ -262,10 +381,11 @@ class AsyncKalshiClient(_KalshiBase):
         api_base: Optional[str] = None,
         *,
         client: Optional[httpx.AsyncClient] = None,
-        timeout: Optional[float] = None,
-        max_retries: int = 3,
+        timeout: Optional[Union[float, httpx.Timeout]] = None,
+        max_retries: int = 2,
         backoff_factor: float = 0.5,
-        retry_statuses: Optional[Sequence[int]] = None,
+        retry_statuses: Optional[Set[int]] = None,
+        mock_responder: Optional[AsyncMockResponder] = None,
     ) -> None:
         super().__init__(
             api_key=api_key,
@@ -276,6 +396,10 @@ class AsyncKalshiClient(_KalshiBase):
         )
         self.timeout = timeout or 10.0
         self._owns_client = client is None
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        self.retry_statuses = retry_statuses or {429, 500, 502, 503, 504}
+        self.mock_responder = mock_responder
 
         headers = {'Content-Type': 'application/json'}
         if self.api_key:
@@ -292,68 +416,159 @@ class AsyncKalshiClient(_KalshiBase):
             for key, value in headers.items():
                 self.client.headers.setdefault(key, value)
 
-    async def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+    async def _request(self, method: str, endpoint: str, **kwargs) -> KalshiApiResponse[Dict[str, Any]]:
         kwargs.setdefault('timeout', self.timeout)
+        if self.mock_responder:
+            start = time.monotonic()
+            mock_response = await self.mock_responder(method, endpoint, kwargs)
+            metrics = RequestMetrics(
+                latency=time.monotonic() - start,
+                retries_attempted=0,
+            )
+            self.logger.info(
+                "Kalshi async mock request completed",
+                extra={
+                    'endpoint': endpoint,
+                    'status_code': mock_response.status_code,
+                    'latency': metrics.latency,
+                    'retries_attempted': metrics.retries_attempted,
+                },
+            )
+            if not (200 <= mock_response.status_code < 300):
+                raise KalshiApiError(
+                    "Mock request failed",
+                    endpoint=endpoint,
+                    status_code=mock_response.status_code,
+                    response_body=mock_response.body,
+                    retries_attempted=0,
+                )
+            return KalshiApiResponse(
+                endpoint=endpoint,
+                status_code=mock_response.status_code,
+                data=mock_response.data,
+                metrics=metrics,
+            )
 
-        for attempt in range(self.max_retries + 1):
+        retries_attempted = 0
+        start = time.monotonic()
+        last_exception: Optional[BaseException] = None
+        while True:
             try:
                 response = await self.client.request(method, endpoint, **kwargs)
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as exc:
-                status_code = exc.response.status_code if exc.response is not None else None
-                response_text = exc.response.text if exc.response is not None else None
-                if status_code in self.retry_statuses and attempt < self.max_retries:
-                    self._log_retry(attempt, method, endpoint, status_code)
-                    await asyncio.sleep(self._get_backoff_seconds(attempt))
+                status_code = response.status_code
+                if status_code in self.retry_statuses and retries_attempted < self.max_retries:
+                    retries_attempted += 1
+                    backoff = self.backoff_factor * (2 ** (retries_attempted - 1))
+                    self.logger.warning(
+                        "Kalshi async request retrying",
+                        extra={
+                            'endpoint': endpoint,
+                            'status_code': status_code,
+                            'retries_attempted': retries_attempted,
+                            'backoff': backoff,
+                        },
+                    )
+                    await asyncio.sleep(backoff)
                     continue
-                self.logger.error("Async API request failed: %s", exc)
-                raise KalshiAPIError(
-                    "Kalshi API error",
-                    method=method,
+                if not (200 <= status_code < 300):
+                    raise KalshiApiError(
+                        "Async API request returned non-success status",
+                        endpoint=endpoint,
+                        status_code=status_code,
+                        response_body=response.text,
+                        retries_attempted=retries_attempted,
+                    )
+                metrics = RequestMetrics(
+                    latency=time.monotonic() - start,
+                    retries_attempted=retries_attempted,
+                )
+                self.logger.info(
+                    "Kalshi async request completed",
+                    extra={
+                        'endpoint': endpoint,
+                        'status_code': status_code,
+                        'latency': metrics.latency,
+                        'retries_attempted': retries_attempted,
+                    },
+                )
+                return KalshiApiResponse(
                     endpoint=endpoint,
                     status_code=status_code,
-                    response_text=response_text,
-                ) from exc
-            except httpx.RequestError as exc:
-                if attempt < self.max_retries:
-                    self._log_retry(attempt, method, endpoint, None)
-                    await asyncio.sleep(self._get_backoff_seconds(attempt))
+                    data=response.json(),
+                    metrics=metrics,
+                )
+            except httpx.HTTPError as exc:
+                last_exception = exc
+                if retries_attempted < self.max_retries:
+                    retries_attempted += 1
+                    backoff = self.backoff_factor * (2 ** (retries_attempted - 1))
+                    self.logger.warning(
+                        "Kalshi async request retrying after exception",
+                        extra={
+                            'endpoint': endpoint,
+                            'exception': str(exc),
+                            'retries_attempted': retries_attempted,
+                            'backoff': backoff,
+                        },
+                    )
+                    await asyncio.sleep(backoff)
                     continue
-                self.logger.error("Async API request failed: %s", exc)
-                raise KalshiRequestError(
-                    "Kalshi request failed",
-                    method=method,
-                    endpoint=endpoint,
-                ) from exc
-            except ValueError as exc:
-                self.logger.error("Failed to decode JSON response: %s", exc)
-                raise KalshiAPIError(
-                    "Kalshi API returned invalid JSON",
-                    method=method,
-                    endpoint=endpoint,
-                    response_text=getattr(response, "text", None),
-                ) from exc
+                break
 
-        raise KalshiRequestError(
-            "Kalshi request failed after retries",
-            method=method,
+        self.logger.error(
+            "Async API request failed",
+            extra={
+                'endpoint': endpoint,
+                'exception': str(last_exception),
+                'retries_attempted': retries_attempted,
+            },
+        )
+        raise KalshiApiError(
+            "Async API request failed",
             endpoint=endpoint,
+            status_code=None,
+            response_body=str(last_exception),
+            retries_attempted=retries_attempted,
         )
 
-    async def get_markets(self, status: str = 'active', limit: int = 100) -> List[Dict[str, Any]]:
-        """Fetch a list of markets filtered by status."""
-        response = await self._request(
-            'GET',
-            '/trade-api/v2/markets',
-            params={'status': status, 'limit': limit},
-        )
-        return response.get('markets', [])
+    async def get_markets(
+        self,
+        status: str = 'active',
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        try:
+            response = await self._request(
+                'GET',
+                '/trade-api/v2/markets',
+                params={'status': status, 'limit': limit},
+            )
+            return response.data.get('markets', [])
+        except KalshiApiError as exc:
+            self.logger.error(
+                "Failed to fetch markets (async)",
+                extra={
+                    'endpoint': exc.endpoint,
+                    'status_code': exc.status_code,
+                    'response_body': exc.response_body,
+                },
+            )
+            return []
 
     async def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
-        """Fetch metadata for a specific market."""
-        response = await self._request('GET', f'/trade-api/v2/markets/{ticker}')
-        return response.get('market')
+        try:
+            response = await self._request('GET', f'/trade-api/v2/markets/{ticker}')
+            return response.data.get('market')
+        except KalshiApiError as exc:
+            self.logger.error(
+                "Failed to fetch market (async)",
+                extra={
+                    'endpoint': exc.endpoint,
+                    'status_code': exc.status_code,
+                    'response_body': exc.response_body,
+                    'ticker': ticker,
+                },
+            )
+            return None
 
     async def get_trades(
         self,
@@ -362,18 +577,30 @@ class AsyncKalshiClient(_KalshiBase):
         min_ts: Optional[datetime] = None,
         max_ts: Optional[datetime] = None,
     ) -> pd.DataFrame:
-        """Fetch recent trades for the provided ticker."""
-        params = {'limit': limit}
-        if min_ts:
-            params['min_ts'] = int(min_ts.timestamp())
-        if max_ts:
-            params['max_ts'] = int(max_ts.timestamp())
-        response = await self._request(
-            'GET',
-            f'/trade-api/v2/markets/{ticker}/trades',
-            params=params,
-        )
-        trades = response.get('trades', [])
+        try:
+            params = {'limit': limit}
+            if min_ts:
+                params['min_ts'] = int(min_ts.timestamp())
+            if max_ts:
+                params['max_ts'] = int(max_ts.timestamp())
+            response = await self._request(
+                'GET',
+                f'/trade-api/v2/markets/{ticker}/trades',
+                params=params,
+            )
+            trades = response.data.get('trades', [])
+        except KalshiApiError as exc:
+            self.logger.error(
+                "Failed to fetch trades (async)",
+                extra={
+                    'endpoint': exc.endpoint,
+                    'status_code': exc.status_code,
+                    'response_body': exc.response_body,
+                    'ticker': ticker,
+                },
+            )
+            return pd.DataFrame()
+
         return self._format_trades(trades)
 
     async def get_market_summary(self, ticker: str) -> Dict[str, Any]:
@@ -424,9 +651,10 @@ class AsyncKalshiClient(_KalshiBase):
 
 
 __all__ = [
+    'KalshiApiError',
+    'KalshiApiResponse',
     'KalshiClient',
     'AsyncKalshiClient',
-    'KalshiAPIError',
-    'KalshiRequestError',
-    'KalshiClientError',
+    'KalshiMockResponse',
+    'RequestMetrics',
 ]
