@@ -63,6 +63,10 @@ class _KalshiBase:
         self,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        *,
+        max_retries: int = 3,
+        backoff_factor: float = 0.5,
+        retry_statuses: Optional[Sequence[int]] = None,
     ) -> None:
         self.api_key = api_key or os.getenv('KALSHI_API_KEY')
         resolved_api_base = api_base if api_base is not None else os.getenv(
@@ -70,6 +74,9 @@ class _KalshiBase:
         )
         self.api_base = resolved_api_base.rstrip('/')
         self.logger = logging.getLogger(__name__)
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        self.retry_statuses = set(retry_statuses or DEFAULT_RETRY_STATUSES)
 
     @staticmethod
     def _parse_json(response: requests.Response) -> Dict[str, Any]:
@@ -82,24 +89,23 @@ class _KalshiBase:
         return f"{self.api_base}/{endpoint.lstrip('/')}"
 
     @staticmethod
-    def _format_trades(trades: List[Dict[str, Any]]) -> pd.DataFrame:
-        if not trades:
-            return pd.DataFrame()
+    def _format_trades(trades: Iterable[Dict[str, Any]]) -> pd.DataFrame:
+        return trades_from_records(trades)
 
-        df = pd.DataFrame(trades)
+    def _get_backoff_seconds(self, attempt: int) -> float:
+        return self.backoff_factor * (2 ** attempt)
 
-        if 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+    def _log_retry(self, attempt: int, method: str, endpoint: str, status: Optional[int]) -> None:
+        status_info = f" status={status}" if status is not None else ""
+        self.logger.warning(
+            "Retrying %s %s (attempt %d/%d)%s",
+            method,
+            endpoint,
+            attempt + 1,
+            self.max_retries,
+            status_info,
+        )
 
-        if 'volume' in df.columns:
-            df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
-        if 'price' in df.columns:
-            df['price'] = pd.to_numeric(df['price'], errors='coerce')
-
-        if 'timestamp' in df.columns:
-            df = df.sort_values('timestamp').reset_index(drop=True)
-
-        return df
 
 class KalshiClient(_KalshiBase):
     """Synchronous Kalshi REST client using ``requests``."""
@@ -116,7 +122,13 @@ class KalshiClient(_KalshiBase):
         retry_statuses: Optional[Set[int]] = None,
         mock_responder: Optional[MockResponder] = None,
     ) -> None:
-        super().__init__(api_key=api_key, api_base=api_base)
+        super().__init__(
+            api_key=api_key,
+            api_base=api_base,
+            max_retries=max_retries,
+            backoff_factor=backoff_factor,
+            retry_statuses=retry_statuses,
+        )
         self.timeout = timeout or 10.0
         self.session = session or requests.Session()
         self.max_retries = max_retries
@@ -318,6 +330,7 @@ class KalshiClient(_KalshiBase):
         return self._format_trades(trades)
 
     def get_market_summary(self, ticker: str) -> Dict[str, Any]:
+        """Return market metadata along with recent volume statistics."""
         market = self.get_market(ticker)
         if not market:
             return {}
@@ -339,20 +352,23 @@ class KalshiClient(_KalshiBase):
                 'avg_trade_size': trades['volume'].mean(),
                 'median_trade_size': trades['volume'].median(),
                 'max_trade_size': trades['volume'].max(),
-                'total_volume_24h': trades[
-                    trades['timestamp'] > (datetime.now() - timedelta(days=1))
-                ]['volume'].sum(),
+                'total_volume_24h': trades.loc[
+                    trades['timestamp'] > (datetime.now() - timedelta(days=1)), 'volume'
+                ].sum(),
             })
 
         return summary
 
     def close(self) -> None:
+        """Close the underlying HTTP session."""
         self.session.close()
 
     def __enter__(self) -> 'KalshiClient':
+        """Enter the context manager for the client."""
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        """Exit the context manager and close resources."""
         self.close()
 
 
@@ -371,7 +387,13 @@ class AsyncKalshiClient(_KalshiBase):
         retry_statuses: Optional[Set[int]] = None,
         mock_responder: Optional[AsyncMockResponder] = None,
     ) -> None:
-        super().__init__(api_key=api_key, api_base=api_base)
+        super().__init__(
+            api_key=api_key,
+            api_base=api_base,
+            max_retries=max_retries,
+            backoff_factor=backoff_factor,
+            retry_statuses=retry_statuses,
+        )
         self.timeout = timeout or 10.0
         self._owns_client = client is None
         self.max_retries = max_retries
@@ -582,6 +604,7 @@ class AsyncKalshiClient(_KalshiBase):
         return self._format_trades(trades)
 
     async def get_market_summary(self, ticker: str) -> Dict[str, Any]:
+        """Return market metadata along with recent volume statistics."""
         market = await self.get_market(ticker)
         if not market:
             return {}
@@ -614,13 +637,16 @@ class AsyncKalshiClient(_KalshiBase):
         return summary
 
     async def aclose(self) -> None:
+        """Close the underlying async HTTP client."""
         if self._owns_client:
             await self.client.aclose()
 
     async def __aenter__(self) -> 'AsyncKalshiClient':
+        """Enter the async context manager for the client."""
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
+        """Exit the async context manager and close resources."""
         await self.aclose()
 
 
