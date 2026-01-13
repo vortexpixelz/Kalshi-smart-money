@@ -21,6 +21,7 @@ from .services import DataIngestionService, DetectionService
 from .utils import (
     bayesian_optimize_weights,
     compute_metrics,
+    find_optimal_threshold,
     gradient_optimize_weights,
 )
 from .utils.optimization import grid_search_weights
@@ -28,7 +29,7 @@ from .utils.optimization import grid_search_weights
 
 class SmartMoneyDetector:
     """
-    Complete smart money detection system with minimal labeled data
+    Complete smart money detection system with minimal labeled data.
 
     Combines:
     - Base anomaly detectors (z-score, IQR, percentile, volume)
@@ -37,13 +38,6 @@ class SmartMoneyDetector:
     - Active learning (Query-by-Committee)
     - Temporal feature encoding
     - Human-in-the-loop feedback
-
-    Example:
-        >>> detector = SmartMoneyDetector()
-        >>> detector.fit(historical_trades)
-        >>> anomalies = detector.predict(new_trades)
-        >>> queries = detector.suggest_manual_reviews(new_trades, n=10)
-        >>> detector.add_feedback(sample_ids, labels)
     """
 
     def __init__(
@@ -52,9 +46,9 @@ class SmartMoneyDetector:
         *,
         data_service: Optional[DataIngestionService] = None,
         detection_service: Optional[DetectionService] = None,
-    ):
+    ) -> None:
         """
-        Initialize smart money detector
+        Initialize smart money detector.
 
         Args:
             config: Configuration object (default: use loaded config)
@@ -153,7 +147,7 @@ class SmartMoneyDetector:
         price_col: Optional[str] = None,
     ) -> "SmartMoneyDetector":
         """
-        Fit detector on historical trade data
+        Fit detector on historical trade data.
 
         Args:
             trades: DataFrame with trade data
@@ -176,7 +170,7 @@ class SmartMoneyDetector:
         if timestamp_col not in trades.columns:
             raise ValueError(f"Column '{timestamp_col}' not found in trade data")
 
-        self.logger.info("Fitting smart money detector on %s trades", len(trades))
+        self.logger.info("Fitting smart money detector on %d trades", len(trades))
 
         # Extract volumes
         volumes = self.data_service.extract_volumes(trades, volume_col)
@@ -206,7 +200,7 @@ class SmartMoneyDetector:
         use_temporal_context: bool = True,
     ) -> np.ndarray:
         """
-        Predict smart money (informed trading) on new trades
+        Predict smart money (informed trading) on new trades.
 
         Args:
             trades: DataFrame with trade data
@@ -241,7 +235,7 @@ class SmartMoneyDetector:
         use_temporal_context: bool = True,
     ) -> np.ndarray:
         """
-        Compute anomaly scores for trades
+        Compute anomaly scores for trades.
 
         Args:
             trades: DataFrame with trade data
@@ -262,12 +256,33 @@ class SmartMoneyDetector:
             trades, timestamp_col, use_temporal_context
         )
 
-        scores = self.detection_service.score(volumes, context)
+        # Get ensemble scores
+        detector_scores = []
+        for detector in self.detectors:
+            raw_scores = np.asarray(detector.score(volumes)).flatten()
+            if raw_scores.size != len(volumes):
+                raise ValueError(
+                    f"Detector {detector.name} returned unexpected score shape."
+                )
+            if raw_scores.max() > raw_scores.min():
+                normalized = (raw_scores - raw_scores.min()) / (
+                    raw_scores.max() - raw_scores.min()
+                )
+            else:
+                normalized = raw_scores
+            detector_scores.append(normalized)
 
-        _, detector_scores = self.detection_service.committee_outputs(volumes)
-        if detector_scores.size:
-            for idx, sample_id in enumerate(trades.index):
-                self._detector_score_cache[sample_id] = detector_scores[idx].copy()
+        detector_scores = (
+            np.column_stack(detector_scores)
+            if detector_scores
+            else np.empty((len(volumes), 0))
+        )
+
+        # Cache detector scores for later optimization
+        for idx, sample_id in enumerate(trades.index):
+            self._detector_score_cache[sample_id] = detector_scores[idx].copy()
+
+        scores = self.ensemble.weighting.combine_scores(detector_scores)
 
         return scores
 
@@ -279,9 +294,11 @@ class SmartMoneyDetector:
         n_queries: int = 10,
     ) -> Tuple[np.ndarray, pd.DataFrame]:
         """
-        Suggest which trades to manually review using active learning
+        Suggest which trades to manually review using active learning.
 
         Uses Query-by-Committee to select trades where detectors disagree most.
+        Validates required inputs, computes temporal context when available,
+        and performs a single scoring pass across detectors.
 
         Args:
             trades: DataFrame with trade data
@@ -295,16 +312,95 @@ class SmartMoneyDetector:
         if not self.is_fitted:
             raise RuntimeError("Detector not fitted. Call fit() first.")
 
+        if trades is None or trades.empty:
+            self.logger.info("No trades provided for manual review suggestions.")
+            empty_indices = np.array([], dtype=int)
+            return empty_indices, trades.head(0).copy()
+
+        if volume_col not in trades.columns:
+            self.logger.warning(
+                "Volume column '%s' not found; cannot suggest manual reviews.",
+                volume_col,
+            )
+            empty_indices = np.array([], dtype=int)
+            return empty_indices, trades.head(0).copy()
+
+        volumes_series = trades[volume_col]
+        if volumes_series.isna().any():
+            self.logger.warning(
+                "Missing volume values detected; cannot suggest manual reviews."
+            )
+            empty_indices = np.array([], dtype=int)
+            return empty_indices, trades.head(0).copy()
+
         volumes = self.data_service.extract_volumes(trades, volume_col)
-        context = self.data_service.build_temporal_context(trades, timestamp_col, True)
 
-        # Get predictions from all detectors
-        committee_predictions, committee_scores = self.detection_service.committee_outputs(
-            volumes
-        )
+        context = None
+        if timestamp_col not in trades.columns:
+            self.logger.info(
+                "Timestamp column '%s' not found; skipping temporal context.",
+                timestamp_col,
+            )
+        else:
+            timestamps = trades[timestamp_col]
+            if timestamps.isna().all():
+                self.logger.info(
+                    "All timestamps are missing; skipping temporal context."
+                )
+            else:
+                context = self.data_service.build_temporal_context(
+                    trades, timestamp_col, use_temporal_context=True
+                )
+                if context is None:
+                    self.logger.info(
+                        "Temporal context unavailable; proceeding without temporal features."
+                    )
 
-        # Select queries using QBC
-        ensemble_scores = self.detection_service.score(volumes, context)
+        committee_predictions = []
+        committee_scores = []
+        normalized_scores = []
+
+        for detector in self.detectors:
+            if hasattr(detector, "predict_with_scores"):
+                predictions, scores = detector.predict_with_scores(volumes)
+            else:
+                scores = detector.score(volumes)
+                predictions = detector.predict(volumes)
+
+            predictions = np.asarray(predictions).astype(int)
+            scores = np.asarray(scores, dtype=float).flatten()
+            if scores.size != len(volumes):
+                raise ValueError(
+                    f"Detector {detector.name} returned unexpected score shape."
+                )
+
+            committee_predictions.append(predictions)
+            committee_scores.append(scores)
+
+            min_score = float(scores.min())
+            max_score = float(scores.max())
+            if max_score > min_score:
+                normalized = (scores - min_score) / (max_score - min_score)
+            else:
+                normalized = scores
+            normalized_scores.append(normalized)
+
+        if committee_predictions:
+            committee_predictions = np.column_stack(committee_predictions)
+            committee_scores = np.column_stack(committee_scores)
+            detector_scores = np.column_stack(normalized_scores)
+        else:
+            committee_predictions = np.empty((len(volumes), 0))
+            committee_scores = np.empty((len(volumes), 0))
+            detector_scores = np.empty((len(volumes), 0))
+
+        if detector_scores.size == 0:
+            ensemble_scores = np.zeros(len(volumes))
+        else:
+            ensemble_scores = self.ensemble.weighting.combine_scores(detector_scores)
+            calibrator = getattr(self.ensemble, "_calibrator", None)
+            if calibrator is not None:
+                ensemble_scores = calibrator.transform(ensemble_scores)
 
         query_indices = self.query_strategy.select_queries(
             volumes,
@@ -313,10 +409,15 @@ class SmartMoneyDetector:
             committee_predictions=committee_predictions,
             committee_scores=committee_scores,
         )
+        query_indices = np.asarray(query_indices, dtype=int)
 
         suggested_trades = trades.iloc[query_indices].copy()
 
-        self.logger.info("Suggested %s trades for manual review", len(query_indices))
+        self.logger.info(
+            "Suggested %d trades for manual review using QBC with %d detectors.",
+            len(query_indices),
+            len(self.detectors),
+        )
 
         return query_indices, suggested_trades
 
@@ -329,7 +430,7 @@ class SmartMoneyDetector:
         update_weights: bool = True,
     ) -> None:
         """
-        Add manual review feedback and update ensemble weights
+        Add manual review feedback and update ensemble weights.
 
         Args:
             sample_ids: List of sample identifiers
@@ -338,6 +439,7 @@ class SmartMoneyDetector:
             volume_col: Name of volume column
             update_weights: If True, update ensemble weights based on feedback
         """
+        # Add to feedback manager
         if labels is None or len(labels) == 0:
             self.logger.info("No feedback labels provided; skipping feedback update.")
             return
@@ -348,7 +450,7 @@ class SmartMoneyDetector:
 
         for sample_id in sample_ids:
             cached_scores = self._detector_score_cache.get(sample_id)
-            if cached_scores is None:
+            if cached_scores is None or cached_scores.size == 0:
                 ensemble_scores.append(None)
                 predictions.append(None)
             else:
@@ -363,7 +465,7 @@ class SmartMoneyDetector:
             scores=ensemble_scores,
         )
 
-        self.logger.info("Added feedback for %s samples", len(labels))
+        self.logger.info("Added feedback for %d samples", len(labels))
 
         # Update ensemble weights if requested and trade data provided
         if update_weights and trades is not None:
@@ -392,7 +494,7 @@ class SmartMoneyDetector:
         self, trades: pd.DataFrame, volume_col: str = 'volume'
     ) -> Dict[str, Any]:
         """
-        Get individual detector contributions for interpretability
+        Get individual detector contributions for interpretability.
 
         Args:
             trades: DataFrame with trade data
@@ -410,7 +512,7 @@ class SmartMoneyDetector:
         n_iterations: int = 20,
     ) -> Tuple[np.ndarray, float]:
         """
-        Optimize ensemble weights using feedback data
+        Optimize ensemble weights using feedback data.
 
         Should only be called after accumulating 10-50 labeled examples.
 
@@ -426,7 +528,7 @@ class SmartMoneyDetector:
 
         if len(labels) < 10:
             self.logger.warning(
-                "Only %s labeled samples available. "
+                "Only %d labeled samples available. "
                 "Recommend waiting until 10-50 samples before optimizing weights.",
                 len(labels),
             )
@@ -443,7 +545,7 @@ class SmartMoneyDetector:
 
         for sample_id, label in zip(sample_ids, labels):
             scores = self._detector_score_cache.get(sample_id)
-            if scores is None:
+            if scores is None or scores.size == 0:
                 missing_samples.append(sample_id)
                 continue
             cached_scores.append(scores)
@@ -512,12 +614,11 @@ class SmartMoneyDetector:
             best_metric,
             improvement,
         )
-
         return optimal_weights, best_metric
 
     def save_state(self, filepath: str) -> None:
         """
-        Save detector state to file
+        Save detector state to file.
 
         Args:
             filepath: Path to save state
@@ -539,7 +640,7 @@ class SmartMoneyDetector:
 
     def load_state(self, filepath: str) -> None:
         """
-        Load detector state from file
+        Load detector state from file.
 
         Args:
             filepath: Path to load state from
@@ -561,7 +662,7 @@ class SmartMoneyDetector:
         self, trades: pd.DataFrame, labels: np.ndarray, volume_col: str = 'volume'
     ) -> Dict[str, float]:
         """
-        Evaluate detector performance on labeled data
+        Evaluate detector performance on labeled data.
 
         Args:
             trades: DataFrame with trade data

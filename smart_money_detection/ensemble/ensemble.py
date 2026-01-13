@@ -29,16 +29,10 @@ class ProbabilityCalibrator(Protocol):
 
 class AnomalyEnsemble:
     """
-    Ensemble of anomaly detectors with adaptive weighting
+    Ensemble of anomaly detectors with adaptive weighting.
 
     Coordinates multiple base detectors and combines their predictions using
     various weighting strategies optimized for minimal labeled data.
-
-    Features:
-        - Multiple base detectors (z-score, IQR, percentile, volume)
-        - Adaptive weighting (uniform, MWU, Thompson, UCB)
-        - Online learning with human feedback
-        - Context-aware weighting with temporal features
     """
 
     def __init__(
@@ -46,9 +40,9 @@ class AnomalyEnsemble:
         detectors: List[DetectorProtocol],
         weighting_method: str = 'thompson',
         weighting_params: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> None:
         """
-        Initialize anomaly ensemble
+        Initialize anomaly ensemble.
 
         Args:
             detectors: List of base anomaly detectors
@@ -82,7 +76,7 @@ class AnomalyEnsemble:
         UCBWeighting,
         ContextualUCBWeighting,
     ]:
-        """Create weighting strategy based on method name"""
+        """Create weighting strategy based on method name."""
         method = method.lower()
 
         if method == 'uniform':
@@ -103,9 +97,9 @@ class AnomalyEnsemble:
             return ContextualUCBWeighting(self.n_detectors, exploration_param, n_clusters)
         raise ValueError(f"Unknown weighting method: {method}")
 
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
+    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None) -> "AnomalyEnsemble":
         """
-        Fit all base detectors
+        Fit all base detectors.
 
         Args:
             X: Training data
@@ -124,32 +118,21 @@ class AnomalyEnsemble:
     def predict(
         self, X: Union[np.ndarray, pd.DataFrame], context: Optional[np.ndarray] = None
     ) -> np.ndarray:
-        """
-        Predict anomaly labels using weighted ensemble
-
-        Args:
-            X: Data to predict
-            context: Optional context features for contextual weighting
-
-        Returns:
-            Binary predictions
-        """
+        """Predict anomaly labels using weighted ensemble."""
         scores = self.score(X, context)
         return (scores > 0.5).astype(int)
 
     def score(
         self, X: Union[np.ndarray, pd.DataFrame], context: Optional[np.ndarray] = None
     ) -> np.ndarray:
-        """
-        Compute anomaly scores using weighted ensemble
+        """Compute anomaly scores using weighted ensemble."""
+        scores, _ = self.score_with_components(X, context)
+        return scores
 
-        Args:
-            X: Data to score
-            context: Optional context features for contextual weighting
-
-        Returns:
-            Anomaly scores
-        """
+    def score_with_components(
+        self, X: Union[np.ndarray, pd.DataFrame], context: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Return ensemble scores plus normalized detector score matrix."""
         detector_scores, _ = self._compute_normalized_score_matrix(X)
 
         # Combine using weights
@@ -158,25 +141,15 @@ class AnomalyEnsemble:
         if self._calibrator is not None:
             ensemble_scores = self._calibrator.transform(ensemble_scores)
 
-        return ensemble_scores
+        return ensemble_scores, detector_scores
 
     def update(
         self,
         X: Union[np.ndarray, pd.DataFrame],
         y_true: np.ndarray,
         context: Optional[np.ndarray] = None,
-    ):
-        """
-        Update ensemble weights based on feedback
-
-        Args:
-            X: Data samples
-            y_true: Ground truth labels
-            context: Optional context features
-
-        Returns:
-            Updated weights
-        """
+    ) -> np.ndarray:
+        """Update ensemble weights based on feedback."""
         detector_scores, _ = self._compute_normalized_score_matrix(X)
 
         # Update weights
@@ -189,27 +162,17 @@ class AnomalyEnsemble:
         return updated_weights
 
     def get_weights(self) -> np.ndarray:
-        """Get current ensemble weights"""
+        """Get current ensemble weights."""
         return self.weighting.get_weights()
 
     def get_detector_contributions(
         self, X: Union[np.ndarray, pd.DataFrame]
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Get individual detector scores and contributions
-
-        Useful for interpretability and debugging.
-
-        Args:
-            X: Data to score
-
-        Returns:
-            Dictionary mapping detector names to scores
-        """
-        _, normalized_scores = self._compute_normalized_score_matrix(X)
+    ) -> Dict[str, Dict[str, np.ndarray]]:
+        """Get individual detector scores and contributions."""
+        detector_scores, normalized_scores = self._compute_normalized_score_matrix(X)
         weights = self.get_weights()
 
-        contributions: Dict[str, Dict[str, Any]] = {}
+        contributions: Dict[str, Dict[str, np.ndarray]] = {}
 
         for i, (detector, scores) in enumerate(zip(self.detectors, normalized_scores)):
             contributions[detector.name] = {
@@ -224,11 +187,11 @@ class AnomalyEnsemble:
         self, X: Union[np.ndarray, pd.DataFrame]
     ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Compute and normalize detector scores, returning stacked matrix and list."""
-
+        array = self._to_numpy(X)
         normalized_scores: List[np.ndarray] = []
 
         for detector in self.detectors:
-            scores = detector.score(X)
+            scores = detector.score(array)
             min_score = np.min(scores)
             max_score = np.max(scores)
 
@@ -237,41 +200,20 @@ class AnomalyEnsemble:
 
             normalized_scores.append(scores)
 
-        detector_scores = np.column_stack(normalized_scores)
+        detector_scores = (
+            np.column_stack(normalized_scores) if normalized_scores else np.empty((array.shape[0], 0))
+        )
 
         return detector_scores, normalized_scores
 
     def get_ensemble_agreement(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Compute ensemble agreement (consistency) for each sample
-
-        Agreement = fraction of detectors predicting anomaly.
-        High agreement (>0.8) indicates high confidence.
-        Low agreement (<0.5) indicates disagreement - good candidates for active learning.
-
-        Args:
-            X: Data to score
-
-        Returns:
-            Agreement scores in [0, 1]
-        """
+        """Compute ensemble agreement (consistency) for each sample."""
         array = self._to_numpy(X)
         predictions = np.column_stack([detector.predict(array) for detector in self.detectors])
         return predictions.mean(axis=1)
 
     def get_ensemble_diversity(self, X: Union[np.ndarray, pd.DataFrame]) -> float:
-        """
-        Compute ensemble diversity using pairwise disagreement
-
-        Diversity = 1 - avg_pairwise(correlation)
-        Higher diversity (>0.6) indicates complementary detection methods.
-
-        Args:
-            X: Data to score
-
-        Returns:
-            Diversity score in [0, 1]
-        """
+        """Compute ensemble diversity using pairwise disagreement."""
         array = self._to_numpy(X)
         scores = self._collect_scores(array)
 
@@ -292,12 +234,12 @@ class AnomalyEnsemble:
 
         return diversity
 
-    def reset_weights(self):
-        """Reset ensemble weights to initial state"""
+    def reset_weights(self) -> None:
+        """Reset ensemble weights to initial state."""
         self.weighting.reset()
 
     def get_state(self) -> Dict[str, Any]:
-        """Get ensemble state for serialization"""
+        """Get ensemble state for serialization."""
         return {
             'weighting_method': self.weighting_method,
             'weighting_state': self.weighting.get_state(),
@@ -306,8 +248,8 @@ class AnomalyEnsemble:
             'detector_names': self.detector_names,
         }
 
-    def set_state(self, state: Dict[str, Any]):
-        """Set ensemble state from serialization"""
+    def set_state(self, state: Dict[str, Any]) -> None:
+        """Set ensemble state from serialization."""
         self.weighting.set_state(state['weighting_state'])
         self.n_samples_seen = state['n_samples_seen']
         self.n_feedbacks_received = state['n_feedbacks_received']
@@ -317,12 +259,10 @@ class AnomalyEnsemble:
     # ------------------------------------------------------------------
     def set_calibrator(self, calibrator: ProbabilityCalibrator) -> None:
         """Attach a calibrator that will post-process ensemble scores."""
-
         self._calibrator = calibrator
 
     def fit_calibrator(self, scores: np.ndarray, y_true: np.ndarray) -> None:
         """Fit the attached calibrator using labelled scores."""
-
         if self._calibrator is None:
             raise ValueError("No calibrator has been set on the ensemble")
         self._calibrator.fit(scores, y_true)
@@ -333,7 +273,6 @@ class AnomalyEnsemble:
     @staticmethod
     def _to_numpy(X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """Convert *X* to a floating point NumPy array once per call path."""
-
         if isinstance(X, pd.DataFrame):
             array = X.to_numpy(copy=False)
         else:
@@ -346,8 +285,9 @@ class AnomalyEnsemble:
 
     def _collect_scores(self, X: np.ndarray) -> np.ndarray:
         """Collect and normalize detector scores for the provided samples."""
-
         scores = np.column_stack([detector.score(X) for detector in self.detectors])
+        if scores.size == 0:
+            return scores
         min_vals = scores.min(axis=0)
         max_vals = scores.max(axis=0)
         ranges = max_vals - min_vals

@@ -216,10 +216,13 @@ class QueryByCommittee(QueryStrategy):
         else:
             raise ValueError(f"Unknown disagreement measure: {self.disagreement_measure}")
 
-        # Select samples with highest disagreement
-        indices = np.argsort(disagreement)[-n_queries:][::-1]
+        # Select samples with highest disagreement (stable for ties)
+        if disagreement.size == 0:
+            return np.array([], dtype=int)
 
-        return indices
+        n_queries = min(n_queries, disagreement.size)
+        order = np.argsort(-disagreement, kind="mergesort")
+        return order[:n_queries]
 
 
 class BALD(QueryStrategy):
