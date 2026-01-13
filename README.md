@@ -121,6 +121,15 @@ This implementation is based on cutting-edge research from 2020-2025:
 
 Customize detection parameters via the configuration loader:
 
+Configuration values are loaded in the following order (later sources win):
+
+1. Defaults defined in `smart_money_detection.config`
+2. YAML files in `config/*.yml` / `config/*.yaml`
+3. Environment variables prefixed with `SMART_MONEY_DETECTION__`
+4. CLI overrides passed to `load_config`
+
+See [`docs/configuration.md`](docs/configuration.md) for full details and examples.
+
 ### Logging
 
 `SmartMoneyDetector` now uses the existing logging configuration instead of configuring
@@ -147,11 +156,17 @@ config.active_learning.query_strategy = 'qbc'  # 'bald', 'uncertainty'
 config.active_learning.batch_size = 10
 config.active_learning.optimize_f1 = True
 
+# Kalshi API credentials (required when enabled)
+config.kalshi.enabled = True
+config.kalshi.api_key = "your-kalshi-key"
+config.kalshi.api_base = "https://api.elections.kalshi.com"
+
 detector = SmartMoneyDetector(config)
 ```
 
 The loader automatically merges values from `config/*.yaml`, environment variables
-(`SMART_MONEY_DETECTION__SECTION__FIELD`), and optional CLI overrides.
+(`SMART_MONEY_DETECTION__SECTION__FIELD`), and optional CLI overrides. Values are
+validated before the detector is constructed.
 
 ### Configuration Checklist
 
