@@ -12,6 +12,28 @@
 - Hardened `KalshiClient` with retry/backoff, typed exceptions, and richer DataFrame hygiene (categorical conversion, numeric coercion) to reduce downstream cleansing costs.
 - Tightened metric and validation helpers with explicit typing, shape validation, and vectorised disagreement calculations. Added fast numpy-based bootstrap/cross-validation paths that avoid repeated Python loops where possible.
 
+## Optimization Impact Summary
+
+| Optimization Area | Expected Impact | Status | Notes |
+| --- | --- | --- | --- |
+| Temporal feature construction | High | In progress | Cache encoded timestamps or precompute cyclic features. |
+| Ensemble input normalization | Medium | Completed | Single conversion/normalization per batch. |
+| Active-learning scoring | Medium | In progress | Share detector score matrix between `predict` and `score`. |
+| Metrics utilities | Low | Completed | Vectorized bootstrap and cross-validation helpers. |
+
+```mermaid
+xychart-beta
+    title "Relative Optimization Impact (Estimated)"
+    x-axis ["Temporal encoding","Ensemble normalization","Active-learning scoring","Metrics utilities"]
+    y-axis "Impact score" 0 --> 5
+    bar [5,3,3,2]
+```
+
+### Interpretation
+- The biggest remaining lever is temporal feature caching; the scoring path touches this on every request and dominates runtime when timestamps are present.
+- Completed ensemble normalization work already removed repeated conversions, which should improve throughput for large batches.
+- Active-learning scoring remains a medium-impact opportunity because it reuses the same detector outputs; consolidating those calls should reduce redundant computation.
+
 ## Residual Technical Debt
 - Temporal encoding still rebuilds feature matrices on every request. Caching encoded timestamps or exposing incremental update APIs would further reduce overhead when streaming new ticks.
 - Active-learning routines duplicate detector work (`predict` and `score`) for committee selection. Sharing detector score matrices across both operations would eliminate redundant passes.
