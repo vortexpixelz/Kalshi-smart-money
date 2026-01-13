@@ -1,6 +1,7 @@
 """Configuration management for the smart money detection system."""
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
@@ -106,6 +107,15 @@ class ActiveLearningConfig:
 
 
 @dataclass
+class KalshiConfig:
+    """Configuration for Kalshi API access."""
+
+    enabled: bool = False
+    api_key: Optional[str] = None
+    api_base: str = "https://api.elections.kalshi.com"
+
+
+@dataclass
 class Config:
     """Main configuration class"""
 
@@ -113,6 +123,7 @@ class Config:
     ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     smart_money: SmartMoneyConfig = field(default_factory=SmartMoneyConfig)
     active_learning: ActiveLearningConfig = field(default_factory=ActiveLearningConfig)
+    kalshi: KalshiConfig = field(default_factory=KalshiConfig)
 
     # Random seed for reproducibility
     random_seed: int = 42
@@ -127,7 +138,7 @@ class Config:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Config":
         """Create a config instance from a mapping."""
-        instance = cls()
+        instance = copy.deepcopy(_DEFAULT_CONFIG)
         _apply_updates(instance, data)
         return instance
 
@@ -176,9 +187,161 @@ def load_config(
         normalized_cli = _normalize_overrides(cli_overrides)
         _deep_update(merged_overrides, normalized_cli)
 
-    config = Config()
+    config = copy.deepcopy(_DEFAULT_CONFIG)
     _apply_updates(config, merged_overrides)
+    _validate_config(config)
     return config
+
+
+def _validate_config(config: Config) -> None:
+    errors: list[str] = []
+
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            errors.append(message)
+
+    detector = config.detector
+    require(detector.zscore_threshold > 0, "detector.zscore_threshold must be > 0")
+    require(detector.zscore_rolling_window > 0, "detector.zscore_rolling_window must be > 0")
+    require(detector.iqr_multiplier > 0, "detector.iqr_multiplier must be > 0")
+    require(detector.iqr_rolling_window > 0, "detector.iqr_rolling_window must be > 0")
+    require(
+        0 < detector.percentile_threshold <= 100,
+        "detector.percentile_threshold must be between 0 and 100",
+    )
+    require(
+        detector.percentile_rolling_window > 0,
+        "detector.percentile_rolling_window must be > 0",
+    )
+    require(
+        detector.volume_threshold_multiplier > 0,
+        "detector.volume_threshold_multiplier must be > 0",
+    )
+    require(
+        detector.volume_rolling_window > 0,
+        "detector.volume_rolling_window must be > 0",
+    )
+
+    ensemble = config.ensemble
+    require(
+        ensemble.weighting_method in {"uniform", "mwu", "thompson", "ucb", "irt"},
+        "ensemble.weighting_method must be one of uniform, mwu, thompson, ucb, irt",
+    )
+    require(
+        0 < ensemble.mwu_learning_rate <= 1,
+        "ensemble.mwu_learning_rate must be between 0 and 1",
+    )
+    require(
+        ensemble.ucb_exploration_param >= 0,
+        "ensemble.ucb_exploration_param must be >= 0",
+    )
+    require(
+        ensemble.thompson_alpha_prior > 0,
+        "ensemble.thompson_alpha_prior must be > 0",
+    )
+    require(
+        ensemble.thompson_beta_prior > 0,
+        "ensemble.thompson_beta_prior must be > 0",
+    )
+    require(
+        ensemble.bayesian_opt_iterations >= 0,
+        "ensemble.bayesian_opt_iterations must be >= 0",
+    )
+    require(
+        ensemble.bayesian_opt_trigger_samples >= 0,
+        "ensemble.bayesian_opt_trigger_samples must be >= 0",
+    )
+
+    smart_money = config.smart_money
+    require(smart_money.vpin_buckets > 0, "smart_money.vpin_buckets must be > 0")
+    require(
+        0 < smart_money.vpin_volume_bucket_size <= 1,
+        "smart_money.vpin_volume_bucket_size must be between 0 and 1",
+    )
+    require(
+        0 < smart_money.vpin_threshold <= 1,
+        "smart_money.vpin_threshold must be between 0 and 1",
+    )
+    require(
+        smart_money.major_market_dollar_threshold > 0,
+        "smart_money.major_market_dollar_threshold must be > 0",
+    )
+    require(
+        smart_money.major_market_oi_percent > 0,
+        "smart_money.major_market_oi_percent must be > 0",
+    )
+    require(
+        smart_money.niche_market_dollar_threshold > 0,
+        "smart_money.niche_market_dollar_threshold must be > 0",
+    )
+    require(
+        smart_money.niche_market_oi_percent > 0,
+        "smart_money.niche_market_oi_percent must be > 0",
+    )
+    require(
+        0 < smart_money.large_trade_percentile <= 100,
+        "smart_money.large_trade_percentile must be between 0 and 100",
+    )
+
+    active_learning = config.active_learning
+    require(
+        active_learning.query_strategy in {"qbc", "bald", "uncertainty", "random"},
+        "active_learning.query_strategy must be one of qbc, bald, uncertainty, random",
+    )
+    require(
+        active_learning.qbc_committee_size > 0,
+        "active_learning.qbc_committee_size must be > 0",
+    )
+    require(
+        active_learning.manual_review_budget >= 0,
+        "active_learning.manual_review_budget must be >= 0",
+    )
+    require(active_learning.batch_size > 0, "active_learning.batch_size must be > 0")
+    require(
+        0 <= active_learning.low_confidence_threshold <= 1,
+        "active_learning.low_confidence_threshold must be between 0 and 1",
+    )
+    require(
+        0 <= active_learning.high_confidence_threshold <= 1,
+        "active_learning.high_confidence_threshold must be between 0 and 1",
+    )
+    require(
+        active_learning.low_confidence_threshold
+        <= active_learning.high_confidence_threshold,
+        "active_learning.low_confidence_threshold must be <= high_confidence_threshold",
+    )
+    require(
+        0 <= active_learning.threshold_search_min <= 1,
+        "active_learning.threshold_search_min must be between 0 and 1",
+    )
+    require(
+        0 <= active_learning.threshold_search_max <= 1,
+        "active_learning.threshold_search_max must be between 0 and 1",
+    )
+    require(
+        active_learning.threshold_search_min
+        <= active_learning.threshold_search_max,
+        "active_learning.threshold_search_min must be <= threshold_search_max",
+    )
+    require(
+        active_learning.threshold_search_step > 0,
+        "active_learning.threshold_search_step must be > 0",
+    )
+
+    kalshi = config.kalshi
+    if kalshi.enabled:
+        require(
+            bool(kalshi.api_key and kalshi.api_key.strip()),
+            "kalshi.api_key is required when kalshi.enabled is true",
+        )
+        require(
+            bool(kalshi.api_base and kalshi.api_base.strip()),
+            "kalshi.api_base is required when kalshi.enabled is true",
+        )
+
+    if errors:
+        formatted = "\n".join(f"- {error}" for error in errors)
+        raise ValueError(f"Invalid configuration:\n{formatted}")
 
 
 def _load_yaml_overrides(
@@ -336,8 +499,8 @@ def _coerce_simple(value: Any, target_type: Any) -> Any:
     return value
 
 
-# Default configuration instance
-default_config = load_config()
+# Default configuration instance used for deep copies
+_DEFAULT_CONFIG = Config()
 
 
 __all__ = [
@@ -345,7 +508,7 @@ __all__ = [
     "Config",
     "DetectorConfig",
     "EnsembleConfig",
+    "KalshiConfig",
     "SmartMoneyConfig",
     "load_config",
-    "default_config",
 ]

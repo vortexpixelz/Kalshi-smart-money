@@ -1,35 +1,51 @@
-# Performance report
+# Smart Money Detection Performance Report
 
 ## Overview
-This report captures baseline measurements for Kalshi market polling and detector inference workloads, along with a post-instrumentation re-run to confirm timing/memory telemetry behavior. The workloads are simulated with mock/historical-style data to avoid external dependencies while still exercising the critical paths.
 
-## Benchmark configuration
-- **Market polling**: 15 polling cycles, 8 markets, 80 trades per market, 4 ms simulated API latency.
-- **Detection**: 500 samples, 4 features, 40 iterations per detector with rolling windows enabled.
+This report summarizes current performance goals, measurement scenarios, and readiness for sandbox validation. The values below are directional targets until a full benchmark run is executed in CI or a controlled load test environment.
 
-## Market polling results (baseline vs. post)
-| Metric | Baseline | Post | Notes |
+## Performance Targets (SLOs)
+
+| Scenario | Target P95 Latency | Target Throughput | Notes |
 | --- | --- | --- | --- |
-| Cycles/sec | 4.907 | 5.613 | Overall polling throughput. |
-| Avg request latency (ms) | 4.615 | 4.346 | Low latency consistent with simulated 4 ms network delay. |
-| Avg get_trades latency (ms) | 16.353 | 13.991 | Includes DataFrame formatting overhead. |
-| Avg get_market_summary latency (ms) | 24.640 | 21.702 | Includes trade aggregation over last 24h. |
+| Batch scoring (1k trades) | <= 1.5s | >= 650 trades/sec | Focus on temporal feature encoding overhead. |
+| Batch scoring (10k trades) | <= 10s | >= 1k trades/sec | Expect improved throughput from single-pass normalization. |
+| Manual review suggestion (1k trades) | <= 2.0s | >= 500 trades/sec | Dependent on reusing detector scores. |
+| Feedback update (50 labels) | <= 0.8s | N/A | CPU-bound metric aggregation. |
 
-## Detection results (baseline vs. post)
-| Metric | Baseline | Post | Notes |
+```mermaid
+xychart-beta
+    title "Latency Budget (Estimated)"
+    x-axis ["Temporal features","Detector scoring","Ensemble normalization","Metrics"]
+    y-axis "Share of total" 0 --> 60
+    bar [45,30,15,10]
+```
+
+### Interpretation
+- Temporal feature work dominates the latency budget, so caching or incremental encoding is the highest leverage optimization before formal benchmarks.
+- Detector scoring remains the second-largest cost; batching and shared score matrices should keep it below one-third of total runtime.
+- Ensemble normalization is expected to stay small after the refactor to single-pass conversion, making it less of a priority for future tuning.
+
+## Benchmark Plan
+
+| Step | Tooling | Data Shape | Output |
 | --- | --- | --- | --- |
-| Throughput (samples/sec) | 91,866.384 | 92,814.268 | Aggregate inference throughput across detectors. |
-| Avg ZScore predict latency (ms) | 0.263 | 0.268 | Simple vectorized computation. |
-| Avg IQR predict latency (ms) | 0.341 | 0.341 | Additional quantile distance checks. |
-| Avg Percentile predict latency (ms) | 0.385 | 0.358 | Threshold check against percentile baseline. |
-| Avg Volume predict latency (ms) | 0.151 | 0.138 | Relative volume ratio check. |
+| Synthetic load generation | `examples/generate_trades.py` (planned) | 1k/10k trade batches | CSV fixtures with timestamps, volume, price |
+| CPU profiling | `python -m cProfile` + `snakeviz` | 10k trades | Hotspot flame graph |
+| Regression tracking | `pytest --durations=10` | Unit suite | Duration deltas in CI |
 
-## Trends
-- **Response times**: The response time plot highlights the consistent latency profiles across pre/post runs, confirming the instrumentation overhead is minimal for the simulated workloads (visualized with seaborn).
-- **Throughput**: Throughput is effectively stable between runs, with minor variance expected from random data generation and interpreter scheduling.
+### Interpretation
+- The benchmark plan prioritizes repeatability and lightweight tooling so that performance regressions are easy to spot in CI.
+- Adding a trade generator fixture will make sandbox tests deterministic and speed up debugging performance regressions.
 
-Plots are generated via `python benchmarks/generate_performance_plots.py` and should be attached to the PR (not committed) due to binary file restrictions.
+## Sandbox Readiness Checklist
 
-## Notes
-- Metrics are recorded via the new timing/memory decorators and emitted as structured JSON telemetry events.
-- Re-run benchmarks after optimization changes to track improvements over time.
+| Item | Status | Owner | Notes |
+| --- | --- | --- | --- |
+| Sandbox API credentials | Pending | Stakeholder | Required for `--live-sandbox` tests. |
+| Retry/backoff validation | Ready | Engineering | Already exercised by `KalshiClient` retry logic. |
+| Rate-limit handling | Pending | Engineering | Needs live validation with sandbox quotas. |
+
+### Interpretation
+- Live sandbox validation is the gating item for confirming rate-limit behavior and latency under real API constraints.
+- Once credentials are provided, the existing retry/backoff logic can be stress-tested without code changes.

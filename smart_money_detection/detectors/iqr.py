@@ -70,7 +70,7 @@ class IQRDetector(BaseDetector):
     def _scores_to_predictions(
         self,
         scores: np.ndarray,
-        X: Union[np.ndarray, pd.DataFrame, None] = None,
+        X: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         predictions = (np.asarray(scores) > 0).astype(int)
         return predictions
