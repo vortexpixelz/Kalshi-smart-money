@@ -51,7 +51,7 @@ class SmartMoneyDetector:
         Initialize smart money detector.
 
         Args:
-            config: Configuration object (default: use default config)
+            config: Configuration object (default: use loaded config)
         """
         self.config = config or load_config()
 
@@ -60,7 +60,6 @@ class SmartMoneyDetector:
 
         # Initialize services
         self.data_service = data_service or DataIngestionService()
-        self.feature_encoder = self.data_service.feature_encoder
         self.detection_service = detection_service or self._build_detection_service()
         self.ensemble = self.detection_service.ensemble
         self.detectors = list(self.detection_service.detectors)
@@ -76,39 +75,39 @@ class SmartMoneyDetector:
 
     def _build_detection_service(self) -> DetectionService:
         """Construct detectors and the ensemble service."""
-        cfg = self.config.detector
+        detector_cfg = self.config.detector
 
         detectors = [
             ZScoreDetector(
-                threshold=cfg.zscore_threshold,
-                rolling_window=cfg.zscore_rolling_window,
+                threshold=detector_cfg.zscore_threshold,
+                rolling_window=detector_cfg.zscore_rolling_window,
             ),
             IQRDetector(
-                multiplier=cfg.iqr_multiplier,
-                rolling_window=cfg.iqr_rolling_window,
+                multiplier=detector_cfg.iqr_multiplier,
+                rolling_window=detector_cfg.iqr_rolling_window,
             ),
             PercentileDetector(
-                percentile=cfg.percentile_threshold,
-                rolling_window=cfg.percentile_rolling_window,
+                percentile=detector_cfg.percentile_threshold,
+                rolling_window=detector_cfg.percentile_rolling_window,
             ),
             RelativeVolumeDetector(
-                threshold_multiplier=cfg.volume_threshold_multiplier,
-                rolling_window=cfg.volume_rolling_window,
+                threshold_multiplier=detector_cfg.volume_threshold_multiplier,
+                rolling_window=detector_cfg.volume_rolling_window,
             ),
         ]
 
-        cfg = self.config.ensemble
+        ensemble_cfg = self.config.ensemble
 
         weighting_params = {
-            'learning_rate': cfg.mwu_learning_rate,
-            'exploration_param': cfg.ucb_exploration_param,
-            'alpha_prior': cfg.thompson_alpha_prior,
-            'beta_prior': cfg.thompson_beta_prior,
+            'learning_rate': ensemble_cfg.mwu_learning_rate,
+            'exploration_param': ensemble_cfg.ucb_exploration_param,
+            'alpha_prior': ensemble_cfg.thompson_alpha_prior,
+            'beta_prior': ensemble_cfg.thompson_beta_prior,
         }
 
         ensemble = AnomalyEnsemble(
             detectors=detectors,
-            weighting_method=cfg.weighting_method,
+            weighting_method=ensemble_cfg.weighting_method,
             weighting_params=weighting_params,
         )
 
@@ -534,7 +533,7 @@ class SmartMoneyDetector:
                 len(labels),
             )
 
-        self.logger.info(f"Optimizing ensemble weights using {method} method")
+        self.logger.info("Optimizing ensemble weights using %s method", method)
 
         # Return current weights as placeholder
         current_weights = self.detection_service.get_weights()
@@ -559,7 +558,7 @@ class SmartMoneyDetector:
 
         if not cached_scores:
             self.logger.error("Cannot optimize weights without cached detector scores.")
-            return self.ensemble.get_weights(), 0.0
+            return current_weights, 0.0
 
         detector_scores = np.vstack(cached_scores)
         y_true = np.array(cached_labels)

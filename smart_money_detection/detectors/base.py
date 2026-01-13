@@ -21,7 +21,7 @@ class DetectorProtocol(Protocol):
     """Structural protocol for detector implementations."""
 
     name: str
-    is_fitted_: bool
+    is_fitted: bool
 
     def fit(self, X: InputData, y: Optional[np.ndarray] = None) -> "DetectorProtocol":
         ...
@@ -129,9 +129,9 @@ class BaseDetector(ABC):
         """Convert anomaly scores into binary predictions."""
 
     def _check_is_fitted(self) -> None:
-        if not self.state.is_fitted:
+        if not self.is_fitted:
             raise DetectorError(
-                f"{self.state.name} has not been fitted yet. Call fit() before predict() or score()."
+                f"{self.name} has not been fitted yet. Call fit() before predict() or score()."
             )
 
     def check_is_fitted(self) -> None:  # pragma: no cover - deprecated surface
