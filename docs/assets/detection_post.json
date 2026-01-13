@@ -1,0 +1,95 @@
+{
+  "label": "post",
+  "duration_s": 0.8619,
+  "iterations": 40,
+  "samples": 500,
+  "features": 4,
+  "throughput_samples_per_second": 92814.268,
+  "metrics": {
+    "detector.zscore.predict": {
+      "count": 40.0,
+      "avg_ms": 0.26752200046757935,
+      "p95_ms": 0.36726245070894936,
+      "max_ms": 0.4549959994619712,
+      "avg_mem_kb": 48.0
+    },
+    "detector.zscore.score_rolling": {
+      "count": 40.0,
+      "avg_ms": 3.073787450011878,
+      "p95_ms": 4.230249550346343,
+      "max_ms": 5.362006999348523,
+      "avg_mem_kb": 29.1481689453125
+    },
+    "detector.zscore.predict_rolling": {
+      "count": 40.0,
+      "avg_ms": 3.307049950308283,
+      "p95_ms": 4.505133850761921,
+      "max_ms": 5.713637001463212,
+      "avg_mem_kb": 29.1481689453125
+    },
+    "detector.iqr.predict": {
+      "count": 40.0,
+      "avg_ms": 0.3408277750168054,
+      "p95_ms": 0.5057040971223614,
+      "max_ms": 0.7254830015881453,
+      "avg_mem_kb": 79.56328125
+    },
+    "detector.iqr.score_rolling": {
+      "count": 40.0,
+      "avg_ms": 7.106979675063485,
+      "p95_ms": 8.644883599845343,
+      "max_ms": 9.49294499878306,
+      "avg_mem_kb": 59.8537109375
+    },
+    "detector.iqr.predict_rolling": {
+      "count": 40.0,
+      "avg_ms": 7.321091950234404,
+      "p95_ms": 8.885738351091277,
+      "max_ms": 9.672459000285016,
+      "avg_mem_kb": 59.8537109375
+    },
+    "detector.percentile.predict": {
+      "count": 40.0,
+      "avg_ms": 0.3576624500055914,
+      "p95_ms": 0.5010336986742914,
+      "max_ms": 0.5486579975695349,
+      "avg_mem_kb": 79.5625
+    },
+    "detector.percentile.score_rolling": {
+      "count": 40.0,
+      "avg_ms": 6.342116725045344,
+      "p95_ms": 7.5995690016497965,
+      "max_ms": 8.394284999667434,
+      "avg_mem_kb": 54.86875
+    },
+    "detector.percentile.predict_rolling": {
+      "count": 40.0,
+      "avg_ms": 6.560825700034911,
+      "p95_ms": 7.866059751722786,
+      "max_ms": 8.7067409986048,
+      "avg_mem_kb": 54.86875
+    },
+    "detector.volume.predict": {
+      "count": 40.0,
+      "avg_ms": 0.13783465001324657,
+      "p95_ms": 0.19659990011859912,
+      "max_ms": 0.22008099767845124,
+      "avg_mem_kb": 33.484375
+    },
+    "detector.volume.score_rolling": {
+      "count": 40.0,
+      "avg_ms": 1.8701570251323574,
+      "p95_ms": 2.3743346499031754,
+      "max_ms": 2.537803000450367,
+      "avg_mem_kb": 18.7841796875
+    },
+    "detector.volume.predict_rolling": {
+      "count": 40.0,
+      "avg_ms": 2.334138000242092,
+      "p95_ms": 2.974048946816765,
+      "max_ms": 3.1453150004381314,
+      "avg_mem_kb": 23.680078125
+    }
+  },
+  "timestamp": "2026-01-13T04:30:35.386655+00:00"
+}

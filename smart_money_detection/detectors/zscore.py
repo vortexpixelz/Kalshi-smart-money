@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseDetector
+from smart_money_detection.utils.performance import track_performance
 
 
 class ZScoreDetector(BaseDetector):
@@ -71,10 +72,12 @@ class ZScoreDetector(BaseDetector):
         predictions = (np.asarray(scores) > self.threshold).astype(int)
         return predictions
 
+    @track_performance("detector.zscore.predict", metadata={"detector": "zscore"})
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         predictions, _ = self.predict_with_scores(X)
         return predictions
 
+    @track_performance("detector.zscore.score_rolling", metadata={"detector": "zscore"})
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
         Compute rolling Z-scores for online detection
@@ -103,6 +106,7 @@ class ZScoreDetector(BaseDetector):
 
         return z_scores.values
 
+    @track_performance("detector.zscore.predict_rolling", metadata={"detector": "zscore"})
     def predict_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
         Predict anomalies using rolling Z-scores

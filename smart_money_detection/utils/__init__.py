@@ -9,6 +9,15 @@ from .optimization import (
     gradient_optimize_weights,
     grid_search_weights,
 )
+from .performance import (
+    PerformanceCollector,
+    PerformanceMetric,
+    TelemetryLogger,
+    get_performance_collector,
+    get_telemetry_logger,
+    reset_performance_collector,
+    track_performance,
+)
 
 __all__ = [
     "compute_metrics",
@@ -22,4 +31,11 @@ __all__ = [
     "bayesian_optimize_weights",
     "gradient_optimize_weights",
     "grid_search_weights",
+    "PerformanceCollector",
+    "PerformanceMetric",
+    "TelemetryLogger",
+    "get_performance_collector",
+    "get_telemetry_logger",
+    "reset_performance_collector",
+    "track_performance",
 ]

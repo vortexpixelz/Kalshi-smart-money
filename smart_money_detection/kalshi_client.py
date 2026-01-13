@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
 import pandas as pd
 import requests
+
+from smart_money_detection.utils.performance import track_performance
 
 
 class _KalshiBase:
@@ -69,6 +71,7 @@ class KalshiClient(_KalshiBase):
                 'Content-Type': 'application/json',
             })
 
+    @track_performance("kalshi.sync.request", metadata={"client": "sync"})
     def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         url = self._build_url(endpoint)
         kwargs.setdefault('timeout', self.timeout)
@@ -80,6 +83,7 @@ class KalshiClient(_KalshiBase):
             self.logger.error(f"API request failed: {exc}")
             raise
 
+    @track_performance("kalshi.sync.get_markets", metadata={"client": "sync"})
     def get_markets(
         self,
         status: str = 'active',
@@ -96,6 +100,7 @@ class KalshiClient(_KalshiBase):
             self.logger.error(f"Failed to fetch markets: {exc}")
             return []
 
+    @track_performance("kalshi.sync.get_market", metadata={"client": "sync"})
     def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
         try:
             response = self._request('GET', f'/trade-api/v2/markets/{ticker}')
@@ -104,6 +109,7 @@ class KalshiClient(_KalshiBase):
             self.logger.error(f"Failed to fetch market {ticker}: {exc}")
             return None
 
+    @track_performance("kalshi.sync.get_trades", metadata={"client": "sync"})
     def get_trades(
         self,
         ticker: str,
@@ -129,6 +135,7 @@ class KalshiClient(_KalshiBase):
 
         return self._format_trades(trades)
 
+    @track_performance("kalshi.sync.get_market_summary", metadata={"client": "sync"})
     def get_market_summary(self, ticker: str) -> Dict[str, Any]:
         market = self.get_market(ticker)
         if not market:
@@ -152,7 +159,8 @@ class KalshiClient(_KalshiBase):
                 'median_trade_size': trades['volume'].median(),
                 'max_trade_size': trades['volume'].max(),
                 'total_volume_24h': trades[
-                    trades['timestamp'] > (datetime.now() - timedelta(days=1))
+                    trades['timestamp']
+                    > (datetime.now(timezone.utc) - timedelta(days=1))
                 ]['volume'].sum(),
             })
 
@@ -198,6 +206,7 @@ class AsyncKalshiClient(_KalshiBase):
             for key, value in headers.items():
                 self.client.headers.setdefault(key, value)
 
+    @track_performance("kalshi.async.request", metadata={"client": "async"})
     async def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         kwargs.setdefault('timeout', self.timeout)
         try:
@@ -208,6 +217,7 @@ class AsyncKalshiClient(_KalshiBase):
             self.logger.error(f"Async API request failed: {exc}")
             raise
 
+    @track_performance("kalshi.async.get_markets", metadata={"client": "async"})
     async def get_markets(
         self,
         status: str = 'active',
@@ -224,6 +234,7 @@ class AsyncKalshiClient(_KalshiBase):
             self.logger.error(f"Failed to fetch markets (async): {exc}")
             return []
 
+    @track_performance("kalshi.async.get_market", metadata={"client": "async"})
     async def get_market(self, ticker: str) -> Optional[Dict[str, Any]]:
         try:
             response = await self._request('GET', f'/trade-api/v2/markets/{ticker}')
@@ -232,6 +243,7 @@ class AsyncKalshiClient(_KalshiBase):
             self.logger.error(f"Failed to fetch market {ticker} (async): {exc}")
             return None
 
+    @track_performance("kalshi.async.get_trades", metadata={"client": "async"})
     async def get_trades(
         self,
         ticker: str,
@@ -257,6 +269,7 @@ class AsyncKalshiClient(_KalshiBase):
 
         return self._format_trades(trades)
 
+    @track_performance("kalshi.async.get_market_summary", metadata={"client": "async"})
     async def get_market_summary(self, ticker: str) -> Dict[str, Any]:
         market = await self.get_market(ticker)
         if not market:
@@ -274,7 +287,7 @@ class AsyncKalshiClient(_KalshiBase):
         }
 
         if not trades.empty:
-            last_day = datetime.now() - timedelta(days=1)
+            last_day = datetime.now(timezone.utc) - timedelta(days=1)
             summary.update(
                 {
                     'n_trades': int(trades.shape[0]),
