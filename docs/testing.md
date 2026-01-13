@@ -9,8 +9,8 @@ Integration tests read the following variables to authenticate against the sandb
 | Variable | Purpose |
 | --- | --- |
 | `KALSHI_SANDBOX_API_KEY` | Required bearer token for sandbox API access |
-| `KALSHI_SANDBOX_EMAIL` | Optional helper for documenting credentials (not used directly by tests) |
-| `KALSHI_SANDBOX_PASSWORD` | Optional helper for documenting credentials (not used directly by tests) |
+| `KALSHI_SANDBOX_EMAIL` | Optional email for sandbox login validation (used when running login integration tests) |
+| `KALSHI_SANDBOX_PASSWORD` | Optional password for sandbox login validation |
 | `KALSHI_SANDBOX_API_BASE` | Override for the sandbox API hostname (defaults to `https://demo-api.kalshi.com`) |
 
 Export the values before invoking the test suite:
@@ -30,6 +30,8 @@ Run the unit tests and offline checks:
 ```bash
 pytest
 ```
+
+When `--live-sandbox` is omitted, tests use a mocked Kalshi session backed by the sandbox snapshot data to keep the suite deterministic.
 
 Execute the sandbox integration checks with retries and detailed output:
 
