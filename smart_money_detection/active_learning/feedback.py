@@ -240,12 +240,10 @@ class FeedbackManager:
         if valid_mask.sum() < 5:  # Need minimum samples with scores
             return
 
-        codex/refactor-_update_optimal_threshold-with-vectorization
         labels = labels[valid_mask]
         scores = scores[valid_mask]
 
         best_f1 = 0
-        main
         best_threshold = 0.5
 
         thresholds = np.arange(0.3, 0.71, 0.01)
