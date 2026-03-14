@@ -289,9 +289,10 @@ class SmartMoneyDetector:
         n_queries: int = 10,
     ) -> Tuple[np.ndarray, pd.DataFrame]:
         """
-        Suggest which trades to manually review using active learning
+        Suggest which trades to manually review using active learning.
 
-        Uses Query-by-Committee to select trades where detectors disagree most.
+        Runs a single scoring pass to compute detector scores, optional temporal
+        context, and committee disagreement signals for Query-by-Committee.
 
         Args:
             trades: DataFrame with trade data
@@ -305,44 +306,86 @@ class SmartMoneyDetector:
         if not self.is_fitted:
             raise RuntimeError("Detector not fitted. Call fit() first.")
 
-        volumes = trades[volume_col].values.reshape(-1, 1)
+        if volume_col not in trades.columns:
+            raise ValueError(f"Required volume column '{volume_col}' is missing.")
 
-        codex/add-context-features-to-manual-reviews
-        context = None
+        volume_series = trades[volume_col]
+        if volume_series.isna().any():
+            raise ValueError("Volume column contains missing values.")
+
+        volumes = volume_series.values.reshape(-1, 1)
+
+        context: Optional[np.ndarray] = None
         if timestamp_col in trades.columns:
             timestamps = trades[timestamp_col]
-            if isinstance(timestamps, pd.Series) and timestamps.notna().any():
+            if not isinstance(timestamps, pd.Series):
+                timestamps = pd.Series(timestamps, index=trades.index)
+
+            if timestamps.isna().all():
+                self.logger.info(
+                    "Timestamp column present but all values are missing; "
+                    "skipping temporal context."
+                )
+            elif timestamps.isna().any():
+                raise ValueError("Timestamp column contains missing values.")
+            else:
                 context = self._get_temporal_context(timestamps)
+        else:
+            self.logger.info("Timestamp column not provided; skipping temporal context.")
 
-        # Get predictions from all detectors
-
-        # Get predictions and scores from all detectors with single scoring pass
-        main
-        committee_predictions = []
-        committee_scores = []
+        committee_predictions: List[np.ndarray] = []
+        committee_scores: List[np.ndarray] = []
+        normalized_scores: List[np.ndarray] = []
 
         for detector in self.detectors:
             predictions, scores = detector.predict_with_scores(volumes)
+
+            if predictions.shape[0] != len(volumes) or scores.shape[0] != len(volumes):
+                raise ValueError(
+                    f"Detector {detector.name} returned unexpected output shape."
+                )
+
             committee_predictions.append(predictions)
             committee_scores.append(scores)
 
-        committee_predictions = np.column_stack(committee_predictions)
-        committee_scores = np.column_stack(committee_scores)
+            min_score = float(np.min(scores))
+            max_score = float(np.max(scores))
+            if max_score > min_score:
+                normalized = (scores - min_score) / (max_score - min_score)
+            else:
+                normalized = scores.astype(float)
+            normalized_scores.append(normalized)
 
-        # Select queries using QBC
-        ensemble_scores = self.ensemble.score(volumes, context)
+        detector_score_matrix = (
+            np.column_stack(normalized_scores)
+            if normalized_scores
+            else np.empty((len(volumes), 0))
+        )
+
+        for idx, sample_id in enumerate(trades.index):
+            self._detector_score_cache[sample_id] = detector_score_matrix[idx].copy()
+
+        committee_predictions_matrix = np.column_stack(committee_predictions)
+        committee_scores_matrix = np.column_stack(committee_scores)
+
+        ensemble_scores = self.ensemble.weighting.combine_scores(detector_score_matrix)
 
         query_indices = self.query_strategy.select_queries(
             volumes,
             ensemble_scores,
             n_queries=n_queries,
-            committee_predictions=committee_predictions,
-            committee_scores=committee_scores,
+            committee_predictions=committee_predictions_matrix,
+            committee_scores=committee_scores_matrix,
+            context=context,
         )
 
         suggested_trades = trades.iloc[query_indices].copy()
 
-        self.logger.info(f"Suggested {len(query_indices)} trades for manual review")
+        self.logger.info(
+            "Suggested %s trades for manual review using %s context",
+            len(query_indices),
+            "temporal" if context is not None else "no",
+        )
 
         return query_indices, suggested_trades
 

@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
+import pytest
 
+from smart_money_detection.active_learning.query_strategies import QueryByCommittee
 from smart_money_detection.pipeline import SmartMoneyDetector
 
 
@@ -9,6 +11,7 @@ class DummyDetector:
         self.name = name
         self.pred_value = pred_value
         self.score_value = score_value
+        self.score_calls = 0
 
     def fit(self, X, y=None):
         return self
@@ -17,12 +20,22 @@ class DummyDetector:
         return np.full(len(X), self.pred_value, dtype=int)
 
     def score(self, X):
+        self.score_calls += 1
         return np.full(len(X), self.score_value, dtype=float)
+
+    def predict_with_scores(self, X):
+        scores = self.score(X)
+        return self.predict(X), scores
 
 
 class DummyEnsemble:
     def __init__(self):
         self.last_context = None
+        self.weighting = self
+
+    def combine_scores(self, scores):
+        # Simple mean combine for testing
+        return scores.mean(axis=1)
 
     def fit(self, X):
         return self
@@ -87,7 +100,9 @@ def test_suggest_manual_reviews_uses_context(monkeypatch):
 
     assert len(indices) == 2
     assert len(suggested) == 2
-    assert detector.ensemble.last_context is expected_context
+    assert detector.query_strategy.last_kwargs["context"] is expected_context
+    assert detector.detectors[0].score_calls == 1
+    assert detector.detectors[1].score_calls == 1
 
 
 def test_suggest_manual_reviews_without_timestamp(monkeypatch):
@@ -109,4 +124,30 @@ def test_suggest_manual_reviews_without_timestamp(monkeypatch):
 
     assert len(indices) == 3
     assert len(suggested) == 3
-    assert detector.ensemble.last_context is None
+    assert detector.query_strategy.last_kwargs["context"] is None
+
+
+def test_suggest_manual_reviews_missing_volume_column():
+    detector = _build_detector()
+
+    trades = pd.DataFrame({"other": np.arange(5)})
+
+    with pytest.raises(ValueError, match="Required volume column 'volume' is missing"):
+        detector.suggest_manual_reviews(trades)
+
+
+def test_qbc_deterministic_ordering_on_ties():
+    strategy = QueryByCommittee(batch_size=3)
+
+    X = np.zeros((5, 1))
+    scores = np.zeros(5)
+    committee_predictions = np.ones((5, 2), dtype=int)
+
+    indices = strategy.select_queries(
+        X,
+        scores,
+        committee_predictions=committee_predictions,
+        committee_scores=np.ones_like(committee_predictions, dtype=float),
+    )
+
+    assert indices.tolist() == [0, 1, 2]
