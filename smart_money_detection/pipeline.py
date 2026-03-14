@@ -8,7 +8,7 @@ import pandas as pd
 from typing import Optional, Dict, List, Any, Tuple, Union
 import logging
 
-from .config import Config, default_config
+from .config import Config, load_config, validate_config
 from .detectors import ZScoreDetector, IQRDetector, PercentileDetector, RelativeVolumeDetector
 from .ensemble import AnomalyEnsemble
 from .features import TemporalFeatureEncoder
@@ -48,9 +48,9 @@ class SmartMoneyDetector:
         Initialize smart money detector
 
         Args:
-            config: Configuration object (default: use default config)
+            config: Configuration object (defaults to `load_config()` when omitted)
         """
-        self.config = config or default_config
+        self.config = validate_config(config) if config is not None else load_config()
 
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -307,7 +307,6 @@ class SmartMoneyDetector:
 
         volumes = trades[volume_col].values.reshape(-1, 1)
 
-        codex/add-context-features-to-manual-reviews
         context = None
         if timestamp_col in trades.columns:
             timestamps = trades[timestamp_col]
@@ -317,12 +316,16 @@ class SmartMoneyDetector:
         # Get predictions from all detectors
 
         # Get predictions and scores from all detectors with single scoring pass
-        main
         committee_predictions = []
         committee_scores = []
 
         for detector in self.detectors:
-            predictions, scores = detector.predict_with_scores(volumes)
+            if hasattr(detector, "predict_with_scores"):
+                predictions, scores = detector.predict_with_scores(volumes)
+            else:
+                predictions = detector.predict(volumes)
+                scores = detector.score(volumes)
+
             committee_predictions.append(predictions)
             committee_scores.append(scores)
 

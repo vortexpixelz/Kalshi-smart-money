@@ -119,7 +119,14 @@ This implementation is based on cutting-edge research from 2020-2025:
 
 ## Configuration
 
-Customize detection parameters via `Config`:
+Configuration values are loaded via `load_config`, which combines library defaults
+with optional `config.yaml`, environment variables (including `.env`), and any
+programmatic overrides. Later sources override earlier ones.
+
+1. Library defaults
+2. YAML file (e.g., `config.yaml`)
+3. Environment variables / `.env`
+4. Manual overrides passed to `load_config`
 
 ### Logging
 
@@ -128,9 +135,9 @@ global logging on initialization. Configure logging in your application before c
 the detector if you need specific handlers or log levels.
 
 ```python
-from smart_money_detection.config import Config
+from smart_money_detection.config import load_config
 
-config = Config()
+config = load_config()
 
 # Ensemble weighting
 config.ensemble.weighting_method = 'thompson'  # 'uniform', 'mwu', 'ucb'
@@ -149,6 +156,24 @@ config.active_learning.optimize_f1 = True
 
 detector = SmartMoneyDetector(config)
 ```
+
+You can also provide a YAML file for overrides:
+
+```yaml
+# config.yaml
+detector:
+  zscore_threshold: 2.5
+kalshi:
+  api_key: "${KALSHI_API_KEY}"  # pulled from environment
+  demo_mode: false
+```
+
+```python
+config = load_config(yaml_path="config.yaml")
+```
+
+See [Configuration documentation](docs/configuration.md) for precedence rules and
+available environment variables.
 
 ## Examples
 

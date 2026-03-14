@@ -53,13 +53,18 @@ class BaseDetector(ABC):
         """
         pass
 
-    @abstractmethod
     def _scores_to_predictions(
         self,
         scores: np.ndarray,
         X: Union[np.ndarray, pd.DataFrame, None] = None,
     ) -> np.ndarray:
-        """Convert anomaly scores into binary predictions."""
+        """Convert anomaly scores into binary predictions.
+
+        Subclasses can override this to apply custom thresholding logic. The
+        default behavior treats scores above 0.5 as anomalies.
+        """
+
+        return (scores > 0.5).astype(int)
 
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """Predict anomaly labels (0 = normal, 1 = anomaly)."""
