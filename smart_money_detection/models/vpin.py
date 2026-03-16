@@ -9,10 +9,14 @@ Key innovation: operate in volume-time rather than clock-time, matching informat
 VPIN correlation with next-bucket absolute returns reached 0.40 for E-mini S&P 500 futures.
 CDF(VPIN) > 0.90 successfully predicted Flash Crash hours in advance.
 """
+import logging
+from typing import Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
-from typing import Union, Optional, Tuple
 from scipy import stats
+
+logger = logging.getLogger(__name__)
 
 
 class VPIN:
@@ -91,6 +95,10 @@ class VPIN:
         if self.volume_bucket_size is None:
             self.volume_bucket_size = self.daily_volume_ * self.bucket_pct_of_daily
 
+        logger.debug(
+            "VPIN fit: price_volatility=%.6f, daily_volume=%.2f, bucket_size=%.2f",
+            self.price_volatility_, self.daily_volume_, self.volume_bucket_size,
+        )
         return self
 
     def classify_trades_bulk(
@@ -210,7 +218,13 @@ class VPIN:
 
             vpin_values.append(vpin)
 
-        return np.array(vpin_values)
+        vpin_array = np.array(vpin_values)
+        logger.debug(
+            "VPIN computed over %d buckets: mean=%.4f, max=%.4f, high_risk_rate=%.2f%% (>0.75)",
+            len(vpin_array), float(vpin_array.mean()), float(vpin_array.max()),
+            float((vpin_array > 0.75).mean() * 100),
+        )
+        return vpin_array
 
     def fit_predict(
         self,
@@ -234,6 +248,10 @@ class VPIN:
         if isinstance(volumes, pd.Series):
             volumes = volumes.values
 
+        logger.info(
+            "VPIN fit_predict: %d price/volume observations, n_buckets=%d",
+            len(prices), self.n_buckets,
+        )
         # Fit parameters
         self.fit(prices, volumes, daily_volume)
 
@@ -241,6 +259,7 @@ class VPIN:
         bucket_buy_volumes, bucket_sell_volumes, _ = self.create_volume_buckets(
             prices, volumes
         )
+        logger.debug("Created %d volume buckets", len(bucket_buy_volumes))
 
         # Compute VPIN
         vpin_values = self.compute_vpin(bucket_buy_volumes, bucket_sell_volumes)

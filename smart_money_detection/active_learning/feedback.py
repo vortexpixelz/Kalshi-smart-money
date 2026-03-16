@@ -4,11 +4,15 @@ Feedback management for human-in-the-loop learning
 Handles collection, storage, and integration of manual reviews into
 the ensemble detection system.
 """
+import json
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime
-import json
+
+logger = logging.getLogger(__name__)
 
 
 class FeedbackManager:
@@ -80,6 +84,11 @@ class FeedbackManager:
             self.n_negative += 1
         self.n_total += 1
 
+        logger.debug(
+            "Feedback added: sample_id=%s label=%d (total=%d pos=%d neg=%d)",
+            sample_id, y_true, self.n_total, self.n_positive, self.n_negative,
+        )
+
         # Update optimal threshold if F1 optimization enabled
         if self.optimize_f1 and self.n_total >= 10:
             self._update_optimal_threshold()
@@ -144,6 +153,11 @@ class FeedbackManager:
         self.n_positive += positives
         self.n_negative += negatives
         self.n_total += n_samples
+
+        logger.info(
+            "Batch feedback added: %d samples (%d positive, %d negative) — total=%d",
+            n_samples, positives, negatives, self.n_total,
+        )
 
         if self.optimize_f1 and self.n_total >= 10:
             self._update_optimal_threshold()
@@ -270,7 +284,12 @@ class FeedbackManager:
             best_idx = np.argmax(f1_scores)
             best_threshold = float(thresholds[best_idx])
 
+        prev_threshold = self.optimal_threshold
         self.optimal_threshold = best_threshold
+        logger.debug(
+            "Optimal F1 threshold updated: %.2f -> %.2f (best_f1=%.4f, n_labeled=%d)",
+            prev_threshold, self.optimal_threshold, float(np.max(f1_scores)) if np.any(f1_scores > 0) else 0.0, self.n_total,
+        )
 
     def get_optimal_threshold(self) -> float:
         """Get optimal decision threshold for F1 score"""
@@ -285,6 +304,7 @@ class FeedbackManager:
         """
         with open(filepath, 'w') as f:
             json.dump(self.feedback_data, f, indent=2)
+        logger.info("Exported %d feedback records to %s", self.n_total, filepath)
 
     def load_feedback(self, filepath: str):
         """
@@ -301,6 +321,11 @@ class FeedbackManager:
         self.n_positive = sum(1 for f in self.feedback_data if f['y_true'] == 1)
         self.n_negative = sum(1 for f in self.feedback_data if f['y_true'] == 0)
         self.n_total = len(self.feedback_data)
+
+        logger.info(
+            "Loaded %d feedback records from %s (pos=%d, neg=%d)",
+            self.n_total, filepath, self.n_positive, self.n_negative,
+        )
 
         # Update optimal threshold
         if self.optimize_f1 and self.n_total >= 10:
@@ -336,6 +361,7 @@ class FeedbackManager:
 
     def clear(self):
         """Clear all feedback data"""
+        logger.info("Clearing all feedback data (%d records)", self.n_total)
         self.feedback_data = []
         self.labeled_indices = set()
         self.n_positive = 0

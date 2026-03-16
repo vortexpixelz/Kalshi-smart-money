@@ -1,12 +1,15 @@
 """Services wrapping detector and ensemble coordination."""
 from __future__ import annotations
 
+import logging
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
 from ..detectors.base import DetectorProtocol
 from ..ensemble.base import EnsembleProtocol
+
+logger = logging.getLogger(__name__)
 
 
 class DetectionService:
@@ -22,16 +25,19 @@ class DetectionService:
 
     def fit(self, X: np.ndarray) -> None:
         """Fit detectors and ensemble on historical data."""
+        logger.info("DetectionService.fit: %d samples, shape=%s", X.shape[0], X.shape)
         self.ensemble.fit(X)
 
     def score(
         self, X: np.ndarray, context: Optional[np.ndarray] = None
     ) -> np.ndarray:
+        logger.debug("DetectionService.score: %d samples", X.shape[0])
         return self.ensemble.score(X, context)
 
     def predict(
         self, X: np.ndarray, context: Optional[np.ndarray] = None
     ) -> np.ndarray:
+        logger.debug("DetectionService.predict: %d samples", X.shape[0])
         return self.ensemble.predict(X, context)
 
     def update(
@@ -40,6 +46,10 @@ class DetectionService:
         y_true: np.ndarray,
         context: Optional[np.ndarray] = None,
     ) -> np.ndarray:
+        logger.info(
+            "DetectionService.update: %d feedback labels (positive_rate=%.2f%%)",
+            len(y_true), float(y_true.mean() * 100),
+        )
         return self.ensemble.update(X, y_true, context)
 
     def committee_outputs(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:

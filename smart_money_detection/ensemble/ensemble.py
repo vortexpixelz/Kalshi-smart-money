@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from ..detectors.base import DetectorProtocol
 from .weighting import (
@@ -78,6 +81,7 @@ class AnomalyEnsemble:
     ]:
         """Create weighting strategy based on method name."""
         method = method.lower()
+        logger.debug("Creating weighting strategy '%s' for %d detectors", method, self.n_detectors)
 
         if method == 'uniform':
             return UniformWeighting(self.n_detectors)
@@ -109,10 +113,16 @@ class AnomalyEnsemble:
             self
         """
         array = self._to_numpy(X)
+        logger.info(
+            "Fitting ensemble (%d detectors, method=%s) on %d samples",
+            self.n_detectors, self.weighting_method, array.shape[0],
+        )
         for detector in self.detectors:
             detector.fit(array, y)
+            logger.debug("Fitted detector '%s'", detector.name)
 
         self.n_samples_seen = array.shape[0]
+        logger.info("Ensemble fit complete")
         return self
 
     def predict(
@@ -141,6 +151,12 @@ class AnomalyEnsemble:
         if self._calibrator is not None:
             ensemble_scores = self._calibrator.transform(ensemble_scores)
 
+        logger.debug(
+            "Ensemble scores: mean=%.4f, max=%.4f, anomaly_rate=%.2f%%",
+            float(ensemble_scores.mean()),
+            float(ensemble_scores.max()),
+            float((ensemble_scores > 0.5).mean() * 100),
+        )
         return ensemble_scores, detector_scores
 
     def update(
@@ -159,6 +175,12 @@ class AnomalyEnsemble:
 
         self.n_feedbacks_received += len(y_true)
 
+        logger.info(
+            "Ensemble weights updated after %d feedback samples (total feedbacks: %d): %s",
+            len(y_true),
+            self.n_feedbacks_received,
+            dict(zip(self.detector_names, [f"{w:.3f}" for w in updated_weights])),
+        )
         return updated_weights
 
     def get_weights(self) -> np.ndarray:
