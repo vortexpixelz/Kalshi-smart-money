@@ -57,6 +57,10 @@ class BaseDetector(ABC):
     def is_fitted_(self) -> bool:
         return self.state.is_fitted
 
+    @property
+    def is_fitted(self) -> bool:
+        return self.state.is_fitted
+
     def fit(self, X: InputData, y: Optional[np.ndarray] = None) -> "BaseDetector":
         """Fit the detector on training data."""
         try:
@@ -116,18 +120,6 @@ class BaseDetector(ABC):
         scores = self._score(array)
         return np.asarray(scores, dtype=float).reshape(-1)
 
-        if values.ndim == 1:
-            values = values.reshape(-1, 1)
-        return values.astype(float)
-
-    @abstractmethod
-    def _scores_to_predictions(
-        self,
-        scores: np.ndarray,
-        X: Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-        """Convert anomaly scores into binary predictions."""
-
     @abstractmethod
     def _scores_to_predictions(
         self,
@@ -157,16 +149,15 @@ class BaseDetector(ABC):
         else:
             array = np.asarray(X)
 
-    @abstractmethod
-    def _scores_to_predictions(
-        self, scores: np.ndarray, X: Optional[InputData] = None
-    ) -> np.ndarray:
-        """Convert anomaly scores into binary predictions."""
+        if array.ndim == 1:
+            array = array.reshape(-1, 1)
 
         if array.ndim != 2:
             raise DetectorError("Input must be a 2-D array")
 
         if not np.all(np.isfinite(array)):
             raise DetectorError("Input contains non-finite values")
+
+        return array
 
 __all__ = ["BaseDetector", "DetectorProtocol", "DetectorError", "InputData"]
