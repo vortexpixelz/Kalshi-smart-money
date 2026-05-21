@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseDetector
+from smart_money_detection.utils.performance import track_performance
 
 
 class RelativeVolumeDetector(BaseDetector):
@@ -60,24 +61,23 @@ class RelativeVolumeDetector(BaseDetector):
     def _scores_to_predictions(
         self,
         scores: np.ndarray,
-        X: Union[np.ndarray, pd.DataFrame, None] = None,
+        X: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         scores_arr = np.asarray(scores)
         predictions = scores_arr > self.threshold_multiplier
 
         if self.absolute_threshold is not None and X is not None:
-            if isinstance(X, pd.DataFrame):
-                X_values = X.values.flatten()
-            else:
-                X_values = np.asarray(X).flatten()
+            X_values = np.asarray(X).flatten()
             predictions = np.logical_or(predictions, X_values > self.absolute_threshold)
 
         return predictions.astype(int)
 
+    @track_performance("detector.volume.predict", metadata={"detector": "volume"})
     def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         predictions, _ = self.predict_with_scores(X)
         return predictions
 
+    @track_performance("detector.volume.score_rolling", metadata={"detector": "volume"})
     def score_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
         Compute rolling relative volume scores for online detection
@@ -109,6 +109,7 @@ class RelativeVolumeDetector(BaseDetector):
 
         return scores.values
 
+    @track_performance("detector.volume.predict_rolling", metadata={"detector": "volume"})
     def predict_rolling(self, X: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """
         Predict anomalies using rolling volume baseline
@@ -182,7 +183,7 @@ class MarketCapAwareVolumeDetector(RelativeVolumeDetector):
         X: Union[np.ndarray, pd.DataFrame],
         y: Optional[np.ndarray] = None,
         market_size: Optional[float] = None,
-    ):
+    ) -> "MarketCapAwareVolumeDetector":
         """
         Fit the detector with market size awareness
 
@@ -199,8 +200,8 @@ class MarketCapAwareVolumeDetector(RelativeVolumeDetector):
             self.is_major_market_ = market_size > self.major_market_threshold * 10
         else:
             # Estimate from data
-            X_values = X.values.flatten() if isinstance(X, pd.DataFrame) else X.flatten()
-            median_volume = np.median(X_values)
+            array = self._to_2d_array(X)
+            median_volume = float(np.median(array))
             self.is_major_market_ = median_volume > self.major_market_threshold / 10
 
         # Adjust parameters based on market type

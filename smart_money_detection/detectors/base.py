@@ -17,7 +17,7 @@ class DetectorProtocol(Protocol):
     """Structural protocol for detector implementations."""
 
     name: str
-    is_fitted_: bool
+    is_fitted: bool
 
     def fit(
         self, X: InputData, y: Optional[np.ndarray] = None
@@ -40,9 +40,13 @@ class DetectorState:
     is_fitted: bool = False
 
 
-class DetectorError(RuntimeError):
-    """Raised when a detector cannot complete its requested operation."""
+    def __init__(self, name: str, *, logger: Optional[logging.Logger] = None) -> None:
+        self.state = DetectorState(name=name)
+        self.logger = logger or logging.getLogger(f"{__name__}.{name}")
 
+    @property
+    def name(self) -> str:
+        return self.state.name
 
 class BaseDetector(ABC):
     """Base class for anomaly detectors."""
@@ -91,27 +95,34 @@ class BaseDetector(ABC):
         return self.predict(X)
 
     def _check_is_fitted(self) -> None:
-        if not self.state.is_fitted:
+        if not self.is_fitted:
             raise DetectorError(
-                f"{self.state.name} has not been fitted yet. Call fit() before predict() or score()."
+                f"{self.name} has not been fitted yet. Call fit() before predict() or score()."
             )
 
-    # Backwards-compatible public alias
     def check_is_fitted(self) -> None:  # pragma: no cover - deprecated surface
+        """Deprecated alias for `_check_is_fitted`."""
         self._check_is_fitted()
+
+    def _validate_input(self, X: InputData) -> np.ndarray:
+        return self._to_2d_array(X)
 
     @staticmethod
     def _to_2d_array(X: InputData) -> np.ndarray:
         """Convert supported input types into a 2-D NumPy array."""
         if isinstance(X, pd.DataFrame):
             array = X.to_numpy(copy=False)
-        elif isinstance(X, np.ndarray):
-            array = X
         else:
-            raise TypeError(f"Expected np.ndarray or pd.DataFrame, received {type(X)!r}")
+            array = np.asarray(X)
 
-        if array.ndim == 1:
-            array = np.reshape(array, (-1, 1))
+    @abstractmethod
+    def _scores_to_predictions(
+        self, scores: np.ndarray, X: Optional[InputData] = None
+    ) -> np.ndarray:
+        """Convert anomaly scores into binary predictions."""
+
+        if array.ndim != 2:
+            raise DetectorError("Input must be a 2-D array")
 
         if not np.all(np.isfinite(array)):
             raise DetectorError("Input contains non-finite values")

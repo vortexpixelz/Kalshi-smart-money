@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, Sequence, runtime_checkable
 
 import numpy as np
 

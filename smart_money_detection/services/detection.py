@@ -46,8 +46,9 @@ class DetectionService:
         predictions = []
         scores = []
         for detector in self.detectors:
-            predictions.append(detector.predict(X))
-            scores.append(detector.score(X))
+            detector_predictions, detector_scores = detector.predict_with_scores(X)
+            predictions.append(detector_predictions)
+            scores.append(detector_scores)
         if not predictions:
             return np.empty((X.shape[0], 0)), np.empty((X.shape[0], 0))
         return np.column_stack(predictions), np.column_stack(scores)
