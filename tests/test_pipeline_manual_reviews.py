@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from smart_money_detection.active_learning import QueryByCommittee
 from smart_money_detection.pipeline import SmartMoneyDetector
@@ -10,6 +11,7 @@ class DummyDetector:
         self.name = name
         self.pred_value = pred_value
         self.score_value = score_value
+        self.score_calls = 0
 
     def fit(self, X, y=None):
         return self
@@ -18,7 +20,12 @@ class DummyDetector:
         return np.full(len(X), self.pred_value, dtype=int)
 
     def score(self, X):
+        self.score_calls += 1
         return np.full(len(X), self.score_value, dtype=float)
+
+    def predict_with_scores(self, X):
+        scores = self.score(X)
+        return self.predict(X), scores
 
 
 class SequenceDetector:

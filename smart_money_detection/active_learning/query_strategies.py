@@ -30,6 +30,7 @@ class QueryStrategy(ABC):
         X: np.ndarray,
         scores: np.ndarray,
         n_queries: Optional[int] = None,
+        **kwargs,
     ) -> np.ndarray:
         """
         Select samples for manual review
@@ -53,6 +54,7 @@ class RandomSampling(QueryStrategy):
         X: np.ndarray,
         scores: np.ndarray,
         n_queries: Optional[int] = None,
+        **kwargs,
     ) -> np.ndarray:
         """Randomly select samples"""
         n_queries = n_queries or self.batch_size
@@ -86,6 +88,7 @@ class UncertaintySampling(QueryStrategy):
         X: np.ndarray,
         scores: np.ndarray,
         n_queries: Optional[int] = None,
+        **kwargs,
     ) -> np.ndarray:
         """
         Select samples with highest uncertainty
@@ -187,6 +190,7 @@ class QueryByCommittee(QueryStrategy):
         n_queries: Optional[int] = None,
         committee_predictions: Optional[np.ndarray] = None,
         committee_scores: Optional[np.ndarray] = None,
+        context: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Select samples with maximum committee disagreement

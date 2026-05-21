@@ -335,8 +335,9 @@ class SmartMoneyDetector:
             volumes,
             ensemble_scores,
             n_queries=n_queries,
-            committee_predictions=committee_predictions,
-            committee_scores=committee_scores,
+            committee_predictions=committee_predictions_matrix,
+            committee_scores=committee_scores_matrix,
+            context=context,
         )
         query_indices = np.asarray(query_indices, dtype=int)
 
