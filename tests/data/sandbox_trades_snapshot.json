@@ -1,0 +1,14 @@
+[
+  {"trade_id": "snapshot_0", "timestamp": "2024-01-01T00:00:00Z", "volume": 110.0, "price": 45.0, "side": "buy"},
+  {"trade_id": "snapshot_1", "timestamp": "2024-01-01T00:05:00Z", "volume": 95.0, "price": 45.5, "side": "sell"},
+  {"trade_id": "snapshot_2", "timestamp": "2024-01-01T00:10:00Z", "volume": 130.0, "price": 46.0, "side": "buy"},
+  {"trade_id": "snapshot_3", "timestamp": "2024-01-01T00:15:00Z", "volume": 150.0, "price": 46.5, "side": "buy"},
+  {"trade_id": "snapshot_4", "timestamp": "2024-01-01T00:20:00Z", "volume": 180.0, "price": 47.0, "side": "sell"},
+  {"trade_id": "snapshot_5", "timestamp": "2024-01-01T00:25:00Z", "volume": 210.0, "price": 47.5, "side": "buy"},
+  {"trade_id": "snapshot_6", "timestamp": "2024-01-01T00:30:00Z", "volume": 250.0, "price": 48.0, "side": "buy"},
+  {"trade_id": "snapshot_7", "timestamp": "2024-01-01T00:35:00Z", "volume": 300.0, "price": 48.5, "side": "sell"},
+  {"trade_id": "snapshot_8", "timestamp": "2024-01-01T00:40:00Z", "volume": 360.0, "price": 49.0, "side": "buy"},
+  {"trade_id": "snapshot_9", "timestamp": "2024-01-01T00:45:00Z", "volume": 420.0, "price": 49.5, "side": "buy"},
+  {"trade_id": "snapshot_10", "timestamp": "2024-01-01T00:50:00Z", "volume": 470.0, "price": 50.0, "side": "sell"},
+  {"trade_id": "snapshot_11", "timestamp": "2024-01-01T00:55:00Z", "volume": 520.0, "price": 50.5, "side": "buy"}
+]

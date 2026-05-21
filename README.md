@@ -110,16 +110,25 @@ This implementation is based on cutting-edge research from 2020-2025:
 
 ### Key Insights
 
-✅ **Start with uniform weights** when you have <10 labeled examples
-✅ **Use Thompson Sampling** for optimal exploration-exploitation
-✅ **Apply active learning** (QBC) to reduce manual reviews by 50-80%
-✅ **Encode time cyclically** to preserve periodicity
-✅ **Optimize F1 threshold** as feedback accumulates
-✅ **Transition to Bayesian optimization** after 10-50 labels
+- **Start with uniform weights** when you have <10 labeled examples
+- **Use Thompson Sampling** for optimal exploration-exploitation
+- **Apply active learning** (QBC) to reduce manual reviews by 50-80%
+- **Encode time cyclically** to preserve periodicity
+- **Optimize F1 threshold** as feedback accumulates
+- **Transition to Bayesian optimization** after 10-50 labels
 
 ## Configuration
 
-Customize detection parameters via `Config`:
+Customize detection parameters via the configuration loader:
+
+Configuration values are loaded in the following order (later sources win):
+
+1. Defaults defined in `smart_money_detection.config`
+2. YAML files in `config/*.yml` / `config/*.yaml`
+3. Environment variables prefixed with `SMART_MONEY_DETECTION__`
+4. CLI overrides passed to `load_config`
+
+See [`docs/configuration.md`](docs/configuration.md) for full details and examples.
 
 ### Logging
 
@@ -128,9 +137,9 @@ global logging on initialization. Configure logging in your application before c
 the detector if you need specific handlers or log levels.
 
 ```python
-from smart_money_detection.config import Config
+from smart_money_detection.config import load_config
 
-config = Config()
+config = load_config()
 
 # Ensemble weighting
 config.ensemble.weighting_method = 'thompson'  # 'uniform', 'mwu', 'ucb'
@@ -147,7 +156,29 @@ config.active_learning.query_strategy = 'qbc'  # 'bald', 'uncertainty'
 config.active_learning.batch_size = 10
 config.active_learning.optimize_f1 = True
 
+# Kalshi API credentials (required when enabled)
+config.kalshi.enabled = True
+config.kalshi.api_key = "your-kalshi-key"
+config.kalshi.api_base = "https://api.elections.kalshi.com"
+
 detector = SmartMoneyDetector(config)
+```
+
+The loader automatically merges values from `config/*.yaml`, environment variables
+(`SMART_MONEY_DETECTION__SECTION__FIELD`), and optional CLI overrides. Values are
+validated before the detector is constructed.
+
+### Configuration Checklist
+
+1. **Base config files**: Review and adjust `config/*.yaml` for environment defaults.
+2. **Environment overrides**: Use `SMART_MONEY_DETECTION__SECTION__FIELD` for per-deployment overrides.
+3. **Runtime usage**: Pass a `SmartMoneyDetector(config)` instance in your application entrypoint.
+
+Example environment override:
+
+```bash
+export SMART_MONEY_DETECTION__ENSEMBLE__WEIGHTING_METHOD=thompson
+export SMART_MONEY_DETECTION__ACTIVE_LEARNING__BATCH_SIZE=20
 ```
 
 ## Examples
@@ -159,7 +190,7 @@ python examples/basic_usage.py
 ```
 
 Demonstrates:
-- Fitting detector on synthetic data
+- Loading trade data from a CSV (expects `trades.csv`)
 - Making predictions
 - Active learning workflow
 - Feedback integration and weight updates
@@ -175,6 +206,26 @@ Shows:
 - Market-specific threshold configuration
 - VPIN computation for order flow toxicity
 - Real-time detection and manual review
+
+## Sandbox Testing Guide
+
+The test suite supports a Kalshi sandbox mode. Follow the steps below for a clean sandbox run:
+
+1. Export sandbox credentials (see `docs/testing.md` for the full list of variables).
+2. Run the unit suite locally: `pytest`
+3. Run sandbox integration tests: `pytest --live-sandbox -vv --durations=10`
+
+If credentials are not available, the live-sandbox tests will skip gracefully.
+
+## Performance Summary
+
+Performance work is tracked in `docs/optimization_report.md` and `docs/performance_report.md`. Key themes:
+
+- Temporal feature encoding remains the highest leverage optimization.
+- Single-pass ensemble normalization reduces repeated conversions in batch scoring.
+- Active-learning scoring can be optimized by reusing detector score matrices.
+
+Refer to the performance report for target latency/throughput goals and the sandbox readiness checklist.
 
 ## Validation with Minimal Data
 

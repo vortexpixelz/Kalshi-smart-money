@@ -1,0 +1,47 @@
+{
+  "label": "baseline",
+  "duration_s": 3.0567,
+  "cycles": 15,
+  "cycles_per_second": 4.907,
+  "market_count": 8,
+  "trades_per_market": 80,
+  "latency_ms": 4.0,
+  "metrics": {
+    "kalshi.sync.request": {
+      "count": 285.0,
+      "avg_ms": 4.614795635190379,
+      "p95_ms": 4.542147601750912,
+      "max_ms": 31.53893000126118,
+      "avg_mem_kb": 0.8395764802631579
+    },
+    "kalshi.sync.get_markets": {
+      "count": 15.0,
+      "avg_ms": 4.566516933361224,
+      "p95_ms": 4.732455900739296,
+      "max_ms": 4.763223001646111,
+      "avg_mem_kb": 2.1529947916666665
+    },
+    "kalshi.sync.get_market": {
+      "count": 135.0,
+      "avg_ms": 4.875767229828785,
+      "p95_ms": 5.164060400420567,
+      "max_ms": 30.07010600049398,
+      "avg_mem_kb": 1.8562138310185186
+    },
+    "kalshi.sync.get_trades": {
+      "count": 135.0,
+      "avg_ms": 16.353485125701237,
+      "p95_ms": 18.986610100546386,
+      "max_ms": 43.767924998974195,
+      "avg_mem_kb": 22.680859375
+    },
+    "kalshi.sync.get_market_summary": {
+      "count": 15.0,
+      "avg_ms": 24.639734666076645,
+      "p95_ms": 28.381949100003116,
+      "max_ms": 30.66979199866182,
+      "avg_mem_kb": 23.1966796875
+    }
+  },
+  "timestamp": "2026-01-13T04:30:06.519466+00:00"
+}

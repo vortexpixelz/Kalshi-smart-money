@@ -8,7 +8,6 @@ services:
       # Kalshi API (set your credentials here or in .env)
       - KALSHI_API_KEY=${KALSHI_API_KEY:-}
       - KALSHI_API_BASE=${KALSHI_API_BASE:-https://api.elections.kalshi.com}
-      - KALSHI_DEMO_MODE=${KALSHI_DEMO_MODE:-true}
 
       # Detection configuration
       - DETECTION_THRESHOLD=${DETECTION_THRESHOLD:-0.75}

@@ -1,57 +1,148 @@
-"""
-Base class for anomaly detectors
-"""
+"""Interfaces and base classes for anomaly detectors."""
+from __future__ import annotations
+
+import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Optional, Protocol, Tuple, Union, runtime_checkable
+
 import numpy as np
 import pandas as pd
-from typing import Union, Optional, Tuple
 
+InputData = Union[np.ndarray, pd.DataFrame]
+
+
+@runtime_checkable
+class DetectorProtocol(Protocol):
+    """Structural protocol for detector implementations."""
+
+    name: str
+    is_fitted: bool
+
+    def fit(
+        self, X: InputData, y: Optional[np.ndarray] = None
+    ) -> "DetectorProtocol":
+        ...
+
+    def predict(self, X: InputData) -> np.ndarray:
+        ...
+
+    def score(self, X: InputData) -> np.ndarray:
+        ...
+
+
+@dataclass
+class DetectorState:
+    """Mutable detector state stored on each detector instance."""
+
+    name: str
+    n_samples_seen: int = 0
+    is_fitted: bool = False
+
+
+    def __init__(self, name: str, *, logger: Optional[logging.Logger] = None) -> None:
+        self.state = DetectorState(name=name)
+        self.logger = logger or logging.getLogger(f"{__name__}.{name}")
+
+    @property
+    def name(self) -> str:
+        return self.state.name
 
 class BaseDetector(ABC):
-    """
-    Abstract base class for anomaly detectors
+    """Base class for anomaly detectors."""
 
-    All detectors should inherit from this class and implement the fit, predict,
-    and score methods.
-    """
+    def __init__(self, name: str):
+        self.state = DetectorState(name=name)
+        self.logger = logging.getLogger(self.__class__.__name__)
 
-    def __init__(self, name: str = None):
-        """
-        Initialize base detector
+    @property
+    def name(self) -> str:
+        return self.state.name
 
-        Args:
-            name: Name of the detector
-        """
-        self.name = name or self.__class__.__name__
-        self.is_fitted_ = False
-        self.n_samples_seen_ = 0
+    @property
+    def is_fitted_(self) -> bool:
+        return self.state.is_fitted
+
+    def fit(self, X: InputData, y: Optional[np.ndarray] = None) -> "BaseDetector":
+        """Fit the detector on training data."""
+        X_validated = self._validate_input(X)
+        self._fit(X_validated, y)
+        self.state.is_fitted = True
+        self.state.n_samples_seen = X_validated.shape[0]
+        return self
+
+    def score(self, X: InputData) -> np.ndarray:
+        """Compute anomaly scores (higher = more anomalous)."""
+        self._check_is_fitted()
+        X_validated = self._validate_input(X)
+        return self._score(X_validated)
+
+    def predict(self, X: InputData) -> np.ndarray:
+        """Predict anomaly labels (0 = normal, 1 = anomaly)."""
+        predictions, _ = self.predict_with_scores(X)
+        return predictions
+
+    def predict_with_scores(self, X: InputData) -> Tuple[np.ndarray, np.ndarray]:
+        """Return both predictions and anomaly scores in a single call."""
+        X_validated = self._validate_input(X)
+        scores = self.score(X_validated)
+        predictions = self._scores_to_predictions(scores, X_validated)
+        return predictions, scores
+
+    def fit_predict(self, X: InputData) -> np.ndarray:
+        """Fit the detector and predict on the same data."""
+        self.fit(X)
+        return self.predict(X)
+
+    def _check_is_fitted(self) -> None:
+        if not self.is_fitted:
+            raise DetectorError(
+                f"{self.name} has not been fitted yet. Call fit() before predict() or score()."
+            )
+
+    def check_is_fitted(self) -> None:  # pragma: no cover - deprecated surface
+        """Deprecated alias for `_check_is_fitted`."""
+        self._check_is_fitted()
+
+    def _validate_input(self, X: InputData) -> np.ndarray:
+        return self._to_2d_array(X)
+
+    @staticmethod
+    def _to_2d_array(X: InputData) -> np.ndarray:
+        """Convert supported input types into a 2-D NumPy array."""
+        if isinstance(X, pd.DataFrame):
+            array = X.to_numpy(copy=False)
+        else:
+            array = np.asarray(X)
 
     @abstractmethod
-    def fit(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[np.ndarray] = None):
-        """
-        Fit the detector on training data
+    def _scores_to_predictions(
+        self, scores: np.ndarray, X: Optional[InputData] = None
+    ) -> np.ndarray:
+        """Convert anomaly scores into binary predictions."""
 
-        Args:
-            X: Training data
-            y: Optional labels (for semi-supervised methods)
+        if array.ndim != 2:
+            raise DetectorError("Input must be a 2-D array")
 
-        Returns:
-            self
-        """
-        pass
+        if not np.all(np.isfinite(array)):
+            raise DetectorError("Input contains non-finite values")
+
+        return array.astype(float, copy=False)
+
+    def _validate_input(self, X: InputData) -> np.ndarray:
+        """Validate input data and convert to 2-D NumPy array."""
+        return self._to_2d_array(X)
+
+    # ------------------------------------------------------------------
+    # Internal API for subclasses
+    # ------------------------------------------------------------------
+    @abstractmethod
+    def _fit(self, X: np.ndarray, y: Optional[np.ndarray]) -> None:
+        """Subclass-specific fitting logic."""
 
     @abstractmethod
-    def score(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Compute anomaly scores (higher = more anomalous)
-
-        Args:
-            X: Data to score
-
-        Returns:
-            Anomaly scores array
-        """
-        pass
+    def _score(self, X: np.ndarray) -> np.ndarray:
+        """Subclass-specific scoring logic."""
 
     @abstractmethod
     def _scores_to_predictions(
@@ -60,71 +151,3 @@ class BaseDetector(ABC):
         X: Union[np.ndarray, pd.DataFrame, None] = None,
     ) -> np.ndarray:
         """Convert anomaly scores into binary predictions."""
-
-    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """Predict anomaly labels (0 = normal, 1 = anomaly)."""
-        predictions, _ = self.predict_with_scores(X)
-        return predictions
-
-    def predict_with_scores(
-        self, X: Union[np.ndarray, pd.DataFrame]
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """Return both predictions and anomaly scores in a single call."""
-
-        X_validated = self._validate_input(X)
-        scores = self.score(X_validated)
-        predictions = self._scores_to_predictions(scores, X_validated)
-        return predictions, scores
-
-    def fit_predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Fit the detector and predict on the same data
-
-        Args:
-            X: Training data
-
-        Returns:
-            Binary predictions array
-        """
-        self.fit(X)
-        return self.predict(X)
-
-    def decision_function(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
-        """
-        Alias for score method (scikit-learn compatibility)
-
-        Args:
-            X: Data to score
-
-        Returns:
-            Anomaly scores array
-        """
-        return self.score(X)
-
-    def check_is_fitted(self):
-        """Check if the detector has been fitted"""
-        if not self.is_fitted_:
-            raise RuntimeError(
-                f"{self.name} has not been fitted yet. Call fit() before predict() or score()."
-            )
-
-    def _validate_input(
-        self, X: Union[np.ndarray, pd.DataFrame]
-    ) -> Union[np.ndarray, pd.DataFrame]:
-        """
-        Validate input data
-
-        Args:
-            X: Input data
-
-        Returns:
-            Validated input data
-        """
-        if isinstance(X, pd.DataFrame):
-            return X
-        elif isinstance(X, np.ndarray):
-            if X.ndim == 1:
-                X = X.reshape(-1, 1)
-            return X
-        else:
-            raise TypeError(f"Expected np.ndarray or pd.DataFrame, got {type(X)}")

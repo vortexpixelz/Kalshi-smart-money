@@ -114,9 +114,9 @@ print(f"Current F1 Score: {stats.get('f1_score', 'N/A')}")
 Adjust thresholds based on market size:
 
 ```python
-from smart_money_detection.config import Config
+from smart_money_detection.config import load_config
 
-config = Config()
+config = load_config()
 
 # For large markets (e.g., presidential elections)
 config.smart_money.major_market_dollar_threshold = 10000
