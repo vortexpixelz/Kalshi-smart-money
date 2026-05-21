@@ -317,90 +317,19 @@ class SmartMoneyDetector:
             empty_indices = np.array([], dtype=int)
             return empty_indices, trades.head(0).copy()
 
-        if volume_col not in trades.columns:
-            self.logger.warning(
-                "Volume column '%s' not found; cannot suggest manual reviews.",
-                volume_col,
-            )
-            empty_indices = np.array([], dtype=int)
-            return empty_indices, trades.head(0).copy()
+        context = self.data_service.build_temporal_context(
+            trades,
+            timestamp_col,
+            self.config.ensemble.use_temporal_context,
+        )
 
-        volumes_series = trades[volume_col]
-        if volumes_series.isna().any():
-            self.logger.warning(
-                "Missing volume values detected; cannot suggest manual reviews."
-            )
-            empty_indices = np.array([], dtype=int)
-            return empty_indices, trades.head(0).copy()
+        # Get predictions from all detectors
+        committee_predictions, committee_scores = self.detection_service.committee_outputs(
+            volumes
+        )
 
-        volumes = self.data_service.extract_volumes(trades, volume_col)
-
-        context = None
-        if timestamp_col not in trades.columns:
-            self.logger.info(
-                "Timestamp column '%s' not found; skipping temporal context.",
-                timestamp_col,
-            )
-        else:
-            timestamps = trades[timestamp_col]
-            if timestamps.isna().all():
-                self.logger.info(
-                    "All timestamps are missing; skipping temporal context."
-                )
-            else:
-                context = self.data_service.build_temporal_context(
-                    trades, timestamp_col, use_temporal_context=True
-                )
-                if context is None:
-                    self.logger.info(
-                        "Temporal context unavailable; proceeding without temporal features."
-                    )
-
-        committee_predictions = []
-        committee_scores = []
-        normalized_scores = []
-
-        for detector in self.detectors:
-            if hasattr(detector, "predict_with_scores"):
-                predictions, scores = detector.predict_with_scores(volumes)
-            else:
-                scores = detector.score(volumes)
-                predictions = detector.predict(volumes)
-
-            predictions = np.asarray(predictions).astype(int)
-            scores = np.asarray(scores, dtype=float).flatten()
-            if scores.size != len(volumes):
-                raise ValueError(
-                    f"Detector {detector.name} returned unexpected score shape."
-                )
-
-            committee_predictions.append(predictions)
-            committee_scores.append(scores)
-
-            min_score = float(scores.min())
-            max_score = float(scores.max())
-            if max_score > min_score:
-                normalized = (scores - min_score) / (max_score - min_score)
-            else:
-                normalized = scores
-            normalized_scores.append(normalized)
-
-        if committee_predictions:
-            committee_predictions = np.column_stack(committee_predictions)
-            committee_scores = np.column_stack(committee_scores)
-            detector_scores = np.column_stack(normalized_scores)
-        else:
-            committee_predictions = np.empty((len(volumes), 0))
-            committee_scores = np.empty((len(volumes), 0))
-            detector_scores = np.empty((len(volumes), 0))
-
-        if detector_scores.size == 0:
-            ensemble_scores = np.zeros(len(volumes))
-        else:
-            ensemble_scores = self.ensemble.weighting.combine_scores(detector_scores)
-            calibrator = getattr(self.ensemble, "_calibrator", None)
-            if calibrator is not None:
-                ensemble_scores = calibrator.transform(ensemble_scores)
+        # Select queries using QBC
+        ensemble_scores = self.detection_service.score(volumes, context)
 
         query_indices = self.query_strategy.select_queries(
             volumes,
@@ -614,6 +543,7 @@ class SmartMoneyDetector:
             best_metric,
             improvement,
         )
+
         return optimal_weights, best_metric
 
     def save_state(self, filepath: str) -> None:
